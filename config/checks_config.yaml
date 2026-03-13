@@ -1,0 +1,553 @@
+# Salesforce Org Health Analyser — Checks Configuration
+# Each check defines what to inspect, its severity, and optional thresholds.
+#
+# severity levels: critical | high | medium | low | info
+# enabled: true | false  (set false to skip a check without deleting it)
+
+checks:
+
+  # ============================================================
+  # SECURITY
+  # ============================================================
+
+  - id: SEC-001
+    category: Security
+    name: System Administrators with Active Sessions
+    severity: critical
+    enabled: true
+    description: >
+      Identifies active users assigned the System Administrator profile.
+      Excessive SA accounts increase the attack surface significantly.
+    threshold:
+      max_count: 5
+
+  - id: SEC-002
+    category: Security
+    name: Users with Modify All Data Permission
+    severity: critical
+    enabled: true
+    description: >
+      Detects non-admin users whose profiles or permission sets grant
+      "Modify All Data" — a permission that bypasses all sharing rules.
+    threshold:
+      max_count: 3
+
+  - id: SEC-003
+    category: Security
+    name: Profiles with View All Data Permission
+    severity: high
+    enabled: true
+    description: >
+      Lists profiles granting "View All Data", which bypasses
+      Organisation-Wide Defaults and all sharing restrictions.
+    threshold:
+      max_count: 2
+
+  - id: SEC-004
+    category: Security
+    name: Password Policy Strength
+    severity: high
+    enabled: true
+    description: >
+      Checks that the org password policy meets minimum security standards:
+      minimum length, complexity requirements, and expiry period.
+    threshold:
+      min_length: 12
+      max_expiry_days: 90
+      require_complexity: true
+
+  - id: SEC-005
+    category: Security
+    name: Multi-Factor Authentication Enforcement
+    severity: critical
+    enabled: true
+    description: >
+      Verifies that MFA is enforced at the org level or via permission sets
+      for all internal users. Salesforce mandates MFA for all users.
+
+  - id: SEC-006
+    category: Security
+    name: Login IP Range Restrictions
+    severity: medium
+    enabled: true
+    description: >
+      Identifies profiles that do not have IP login restrictions configured.
+      Unrestricted login IPs increase exposure to credential-based attacks.
+
+  - id: SEC-007
+    category: Security
+    name: Guest User Profile Permissions
+    severity: high
+    enabled: true
+    description: >
+      Audits permissions granted to the Guest User profile on Experience
+      Cloud sites. Guest users should have minimal access only.
+
+  - id: SEC-008
+    category: Security
+    name: Named Credentials for External Callouts
+    severity: medium
+    enabled: true
+    description: >
+      Checks whether external callouts use Named Credentials (secure)
+      rather than hardcoded credentials in Custom Settings or Apex.
+
+  - id: SEC-009
+    category: Security
+    name: Field-Level Security on Sensitive Fields
+    severity: high
+    enabled: true
+    description: >
+      Verifies that fields commonly holding sensitive data (SSN, salary,
+      credit card, bank account) have restrictive FLS across profiles.
+    sensitive_field_patterns:
+      - SSN
+      - Social_Security
+      - Salary
+      - Credit_Card
+      - Bank_Account
+      - Tax_ID
+
+  - id: SEC-010
+    category: Security
+    name: API-Only Users Without IP Restrictions
+    severity: high
+    enabled: true
+    description: >
+      Identifies integration/API users that have no IP range restrictions.
+      API accounts without IP locking can be exploited if credentials leak.
+
+  - id: SEC-011
+    category: Security
+    name: Permission Sets Granting Admin-Level Access
+    severity: high
+    enabled: true
+    description: >
+      Detects permission sets that combine high-risk permissions equivalent
+      to administrator access (e.g., Manage Users + Modify All Data).
+
+  - id: SEC-012
+    category: Security
+    name: Inactive Users with Active Licenses
+    severity: medium
+    enabled: true
+    description: >
+      Lists users who have not logged in within the threshold period but
+      still hold active Salesforce licenses, representing a cost and
+      security risk.
+    threshold:
+      inactive_days: 90
+
+  # ============================================================
+  # AUTOMATION
+  # ============================================================
+
+  - id: AUTO-001
+    category: Automation
+    name: Active Process Builders (Legacy)
+    severity: medium
+    enabled: true
+    description: >
+      Counts active Process Builder automations. Salesforce has deprecated
+      Process Builder in favour of Flow. Active PBs should be migrated.
+    threshold:
+      max_count: 0
+
+  - id: AUTO-002
+    category: Automation
+    name: Active Workflow Rules (Legacy)
+    severity: medium
+    enabled: true
+    description: >
+      Counts active Workflow Rules. Salesforce recommends migrating all
+      Workflow Rules to Record-Triggered Flows.
+    threshold:
+      max_count: 0
+
+  - id: AUTO-003
+    category: Automation
+    name: Multiple Triggers on the Same Object
+    severity: high
+    enabled: true
+    description: >
+      Detects objects with more than one active Apex Trigger. Multiple
+      triggers create unpredictable execution order and are hard to maintain.
+    threshold:
+      max_triggers_per_object: 1
+
+  - id: AUTO-004
+    category: Automation
+    name: Flows Without Error Handling (Fault Paths)
+    severity: high
+    enabled: true
+    description: >
+      Identifies active Record-Triggered and Scheduled Flows that have no
+      fault connector configured. Unhandled errors fail silently.
+
+  - id: AUTO-005
+    category: Automation
+    name: Scheduled Flows Failing in Last 30 Days
+    severity: critical
+    enabled: true
+    description: >
+      Checks the Flow Interview log for scheduled flows that have errored
+      within the last 30 days.
+    threshold:
+      lookback_days: 30
+
+  - id: AUTO-006
+    category: Automation
+    name: Apex Triggers Without Test Coverage
+    severity: critical
+    enabled: true
+    description: >
+      Identifies Apex Triggers with less than the minimum required test
+      coverage. Salesforce requires 75% coverage for deployment to production.
+    threshold:
+      min_coverage_percent: 75
+
+  - id: AUTO-007
+    category: Automation
+    name: Overlapping Automation on the Same Object/Event
+    severity: medium
+    enabled: true
+    description: >
+      Detects objects where both a Flow and a Trigger handle the same
+      DML event (e.g., before update), which can cause unpredictable
+      double-execution or conflicts.
+
+  - id: AUTO-008
+    category: Automation
+    name: Approval Processes Without Rejection Notifications
+    severity: medium
+    enabled: true
+    description: >
+      Identifies approval processes that have no rejection email alert or
+      field update configured, leaving submitters uninformed of rejection.
+
+  - id: AUTO-009
+    category: Automation
+    name: Active Flows With No Description
+    severity: low
+    enabled: true
+    description: >
+      Lists active Flows that have no description set. Undocumented flows
+      are difficult to maintain and audit.
+
+  - id: AUTO-010
+    category: Automation
+    name: High-Volume Scheduled Jobs Running Daily
+    severity: info
+    enabled: true
+    description: >
+      Reports on Apex Scheduled Jobs running at a frequency of daily or
+      higher, to assess operational load and scheduling conflicts.
+    threshold:
+      flag_frequency: daily
+
+  # ============================================================
+  # DATA MODEL
+  # ============================================================
+
+  - id: DATA-001
+    category: Data Model
+    name: Custom Objects Without Description
+    severity: low
+    enabled: true
+    description: >
+      Lists custom objects that have no description populated in their
+      metadata. Documentation is essential for long-term maintainability.
+
+  - id: DATA-002
+    category: Data Model
+    name: Custom Fields Without Description
+    severity: low
+    enabled: true
+    description: >
+      Identifies custom fields (across all objects) with no description.
+    threshold:
+      min_coverage_percent: 80
+
+  - id: DATA-003
+    category: Data Model
+    name: Objects Approaching Record Limit
+    severity: high
+    enabled: true
+    description: >
+      Flags objects whose record count is approaching Salesforce's limits
+      or internal performance thresholds.
+    threshold:
+      warning_record_count: 10000000
+      critical_record_count: 50000000
+
+  - id: DATA-004
+    category: Data Model
+    name: Multi-Select Picklist Fields in Use
+    severity: medium
+    enabled: true
+    description: >
+      Detects multi-select picklist fields, which are notoriously difficult
+      to report on and filter. Recommends alternatives where appropriate.
+    threshold:
+      max_count: 10
+
+  - id: DATA-005
+    category: Data Model
+    name: Objects With More Than 2 Master-Detail Relationships
+    severity: high
+    enabled: true
+    description: >
+      Salesforce allows a maximum of 2 Master-Detail relationships per
+      object. This check flags objects approaching or at that limit.
+    threshold:
+      max_count: 2
+
+  - id: DATA-006
+    category: Data Model
+    name: Duplicate Rules and Matching Rules Configuration
+    severity: medium
+    enabled: true
+    description: >
+      Verifies that Duplicate Rules are active on key objects (Account,
+      Contact, Lead) to prevent data quality degradation.
+    required_objects:
+      - Account
+      - Contact
+      - Lead
+
+  - id: DATA-007
+    category: Data Model
+    name: Custom Objects Without External ID Fields
+    severity: medium
+    enabled: true
+    description: >
+      Identifies custom objects that have no External ID field, which
+      makes data migration and integration upsert operations difficult.
+
+  - id: DATA-008
+    category: Data Model
+    name: Unused Custom Fields (No Data Populated)
+    severity: info
+    enabled: true
+    description: >
+      Detects custom fields where 95%+ of records have a null value,
+      suggesting the field may be unused and a candidate for removal.
+    threshold:
+      null_percent_threshold: 95
+
+  - id: DATA-009
+    category: Data Model
+    name: Validation Rules Without Error Message Details
+    severity: low
+    enabled: true
+    description: >
+      Flags active validation rules whose error message is generic or
+      very short, which provides poor UX to end users.
+    threshold:
+      min_message_length: 20
+
+  - id: DATA-010
+    category: Data Model
+    name: Record Types Without Page Layout Assignment
+    severity: medium
+    enabled: true
+    description: >
+      Identifies record types that are not assigned a page layout for one
+      or more active profiles, which causes users to see a default layout
+      instead of the intended one.
+
+  # ============================================================
+  # INTEGRATIONS
+  # ============================================================
+
+  - id: INT-001
+    category: Integrations
+    name: Connected Apps With Excessive OAuth Scopes
+    severity: high
+    enabled: true
+    description: >
+      Lists Connected Apps that have been granted "Full Access" (api)
+      OAuth scope when more restricted scopes would suffice.
+    flag_scopes:
+      - full
+      - refresh_token
+
+  - id: INT-002
+    category: Integrations
+    name: Integration Users Sharing Credentials
+    severity: critical
+    enabled: true
+    description: >
+      Detects if multiple integrations appear to use the same Salesforce
+      user account, which prevents per-integration auditing and makes
+      credential rotation high-risk.
+
+  - id: INT-003
+    category: Integrations
+    name: Outbound Messages Without Acknowledgement Endpoint
+    severity: medium
+    enabled: true
+    description: >
+      Identifies active Outbound Messages that point to endpoints which
+      have recently returned errors or are unreachable.
+
+  - id: INT-004
+    category: Integrations
+    name: Active Named Credentials Using Basic Authentication
+    severity: medium
+    enabled: true
+    description: >
+      Flags Named Credentials using username/password (Basic Auth) instead
+      of OAuth 2.0, which is the more secure standard.
+
+  - id: INT-005
+    category: Integrations
+    name: REST API Daily Request Limit Usage
+    severity: high
+    enabled: true
+    description: >
+      Reports current API request usage as a percentage of the org's
+      daily API request limit to identify risk of limit exhaustion.
+    threshold:
+      warning_percent: 70
+      critical_percent: 90
+
+  - id: INT-006
+    category: Integrations
+    name: Platform Events Without Subscribers
+    severity: low
+    enabled: true
+    description: >
+      Lists Platform Events defined in the org that have no active
+      subscribers (triggers, flows, or external listeners), indicating
+      dead infrastructure.
+
+  - id: INT-007
+    category: Integrations
+    name: Certificates Expiring Within Threshold
+    severity: critical
+    enabled: true
+    description: >
+      Checks Salesforce Certificates used for SSO, signed callouts, or
+      JWT authentication that are approaching their expiry date.
+    threshold:
+      warning_days: 60
+      critical_days: 14
+
+  - id: INT-008
+    category: Integrations
+    name: Remote Site Settings With Wildcards
+    severity: medium
+    enabled: true
+    description: >
+      Identifies Remote Site Settings configured with overly broad or
+      wildcard URLs, which allow callouts to any host under that domain.
+
+  # ============================================================
+  # GOVERNANCE
+  # ============================================================
+
+  - id: GOV-001
+    category: Governance
+    name: Sandbox Refresh Date
+    severity: info
+    enabled: true
+    description: >
+      Reports the last refresh date of each sandbox. Stale sandboxes
+      may not reflect the current production metadata and data.
+    threshold:
+      warning_days_since_refresh: 180
+
+  - id: GOV-002
+    category: Governance
+    name: Apex Code Without Test Classes
+    severity: critical
+    enabled: true
+    description: >
+      Identifies Apex Classes that have no corresponding test class.
+      Untested code cannot be deployed and represents a quality risk.
+
+  - id: GOV-003
+    category: Governance
+    name: Overall Org Test Coverage
+    severity: critical
+    enabled: true
+    description: >
+      Reports the org-wide Apex test coverage percentage. Salesforce
+      requires 75% minimum for production deployments.
+    threshold:
+      min_coverage_percent: 75
+
+  - id: GOV-004
+    category: Governance
+    name: Storage Usage (Data and File)
+    severity: high
+    enabled: true
+    description: >
+      Reports current data storage and file storage usage as a percentage
+      of the org's allocated limits.
+    threshold:
+      warning_percent: 75
+      critical_percent: 90
+
+  - id: GOV-005
+    category: Governance
+    name: Debug Logs Left Enabled for Users
+    severity: low
+    enabled: true
+    description: >
+      Identifies users who have active debug log configurations, which
+      consume storage and can expose sensitive data in logs.
+
+  - id: GOV-006
+    category: Governance
+    name: Custom Labels Count
+    severity: info
+    enabled: true
+    description: >
+      Reports the total number of custom labels. A very high count may
+      indicate label sprawl and a need for governance.
+    threshold:
+      warning_count: 5000
+
+  - id: GOV-007
+    category: Governance
+    name: Deprecated API Versions in Use
+    severity: high
+    enabled: true
+    description: >
+      Detects Apex Classes, Triggers, and Flows that reference API versions
+      scheduled for retirement by Salesforce.
+    threshold:
+      min_api_version: 50.0
+
+  - id: GOV-008
+    category: Governance
+    name: Change Sets Pending Deployment Over 30 Days
+    severity: medium
+    enabled: true
+    description: >
+      Flags inbound change sets that have been awaiting deployment for
+      more than the threshold number of days.
+    threshold:
+      max_pending_days: 30
+
+  - id: GOV-009
+    category: Governance
+    name: Custom Metadata Types vs Custom Settings Usage
+    severity: info
+    enabled: true
+    description: >
+      Reports on Custom Settings still in use (as opposed to Custom
+      Metadata Types), and flags Hierarchy-type Custom Settings that
+      could be migrated to Custom Metadata for better deployability.
+
+  - id: GOV-010
+    category: Governance
+    name: Active Users Without Role Assignment
+    severity: medium
+    enabled: true
+    description: >
+      Lists active internal users who have no Role assigned. Users without
+      roles do not participate in the Role Hierarchy for record sharing,
+      which may cause unintended data access gaps.
