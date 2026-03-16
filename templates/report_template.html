@@ -1,2 +1,923 @@
+<!DOCTYPE html>
 <!-- Jinja2 HTML template for the Salesforce Org Health Report.
      Rendered by src/report_generator.py with findings data. -->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Salesforce Org Health Assessment — {{ report.org_name }}</title>
+  <style>
+    /* ------------------------------------------------------------------ */
+    /* Reset & base                                                         */
+    /* ------------------------------------------------------------------ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --navy:       #1a1f36;
+      --navy-mid:   #252c4a;
+      --navy-light: #2d3561;
+      --white:      #ffffff;
+      --bg:         #f4f6fb;
+      --border:     #e2e8f0;
+      --text:       #1a202c;
+      --text-muted: #718096;
+      --shadow-sm:  0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.06);
+      --shadow-md:  0 4px 12px rgba(0,0,0,.10), 0 2px 4px rgba(0,0,0,.06);
+      --shadow-lg:  0 10px 25px rgba(0,0,0,.12), 0 4px 8px rgba(0,0,0,.06);
+      --radius:     12px;
+      --radius-sm:  8px;
+      --critical:   #e53e3e;
+      --high:       #dd6b20;
+      --medium:     #d69e2e;
+      --low:        #38a169;
+      --info:       #718096;
+      --font:       system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Header                                                               */
+    /* ------------------------------------------------------------------ */
+    header {
+      background: linear-gradient(135deg, var(--navy) 0%, var(--navy-light) 100%);
+      color: var(--white);
+      padding: 28px 0;
+      box-shadow: 0 4px 20px rgba(0,0,0,.3);
+    }
+
+    .header-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .sf-icon {
+      width: 52px;
+      height: 52px;
+      background: rgba(255,255,255,.15);
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 26px;
+      flex-shrink: 0;
+      border: 1px solid rgba(255,255,255,.2);
+    }
+
+    .header-title {
+      font-size: 1.6rem;
+      font-weight: 700;
+      letter-spacing: -.02em;
+      line-height: 1.2;
+    }
+
+    .header-meta {
+      display: flex;
+      gap: 12px;
+      margin-top: 4px;
+      flex-wrap: wrap;
+    }
+
+    .header-meta span {
+      font-size: .8rem;
+      color: rgba(255,255,255,.7);
+      background: rgba(255,255,255,.1);
+      border: 1px solid rgba(255,255,255,.15);
+      border-radius: 6px;
+      padding: 2px 10px;
+    }
+
+    .header-right {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 8px;
+    }
+
+    .ai-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(255,255,255,.12);
+      border: 1px solid rgba(255,255,255,.2);
+      border-radius: 20px;
+      padding: 5px 14px;
+      font-size: .78rem;
+      font-weight: 600;
+      letter-spacing: .02em;
+    }
+
+    .ai-dot {
+      width: 7px;
+      height: 7px;
+      background: #68d391;
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: .4; }
+    }
+
+    .header-timestamp {
+      font-size: .75rem;
+      color: rgba(255,255,255,.55);
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Executive summary row                                               */
+    /* ------------------------------------------------------------------ */
+    .executive-summary {
+      padding: 40px 0 0;
+    }
+
+    .section-title {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--navy);
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .section-title::after {
+      content: "";
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr) auto;
+      gap: 16px;
+      align-items: stretch;
+    }
+
+    /* Stat cards */
+    .stat-card {
+      background: var(--white);
+      border-radius: var(--radius);
+      padding: 22px 18px;
+      box-shadow: var(--shadow-sm);
+      border-top: 4px solid transparent;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      transition: box-shadow .2s, transform .2s;
+    }
+
+    .stat-card:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); }
+
+    .stat-card.critical { border-top-color: var(--critical); }
+    .stat-card.high     { border-top-color: var(--high); }
+    .stat-card.medium   { border-top-color: var(--medium); }
+    .stat-card.low      { border-top-color: var(--low); }
+
+    .stat-label {
+      font-size: .72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      color: var(--text-muted);
+    }
+
+    .stat-number {
+      font-size: 2.8rem;
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: -.03em;
+    }
+
+    .stat-card.critical .stat-number { color: var(--critical); }
+    .stat-card.high     .stat-number { color: var(--high); }
+    .stat-card.medium   .stat-number { color: var(--medium); }
+    .stat-card.low      .stat-number { color: var(--low); }
+
+    .stat-sub {
+      font-size: .75rem;
+      color: var(--text-muted);
+    }
+
+    /* Health gauge card */
+    .gauge-card {
+      background: var(--white);
+      border-radius: var(--radius);
+      padding: 22px 28px;
+      box-shadow: var(--shadow-sm);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-width: 200px;
+      transition: box-shadow .2s;
+    }
+
+    .gauge-card:hover { box-shadow: var(--shadow-md); }
+
+    .gauge-wrapper {
+      position: relative;
+      width: 160px;
+      height: 160px;
+    }
+
+    .gauge-svg {
+      width: 100%;
+      height: 100%;
+      transform: rotate(-90deg);
+    }
+
+    .gauge-track {
+      stroke: #edf2f7;
+      stroke-width: 14;
+      fill: none;
+    }
+
+    .gauge-progress {
+      fill: none;
+      stroke-width: 14;
+      stroke-linecap: round;
+      transition: stroke-dashoffset 1.6s cubic-bezier(.4,0,.2,1),
+                  stroke 1.6s ease;
+    }
+
+    .gauge-center {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .gauge-score-text {
+      font-size: 2.2rem;
+      font-weight: 800;
+      letter-spacing: -.04em;
+      line-height: 1;
+    }
+
+    .gauge-score-label {
+      font-size: .72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .gauge-title {
+      font-size: .72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      color: var(--text-muted);
+      margin-top: 10px;
+    }
+
+    .gauge-status-badge {
+      margin-top: 8px;
+      padding: 4px 14px;
+      border-radius: 20px;
+      font-size: .75rem;
+      font-weight: 700;
+      letter-spacing: .04em;
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Category breakdown                                                  */
+    /* ------------------------------------------------------------------ */
+    .category-breakdown {
+      padding: 36px 0 0;
+    }
+
+    .breakdown-card {
+      background: var(--white);
+      border-radius: var(--radius);
+      padding: 24px 28px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .cat-row {
+      display: grid;
+      grid-template-columns: 130px 1fr 48px;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 12px;
+    }
+
+    .cat-row:last-child { margin-bottom: 0; }
+
+    .cat-name {
+      font-size: .82rem;
+      font-weight: 600;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .bar-track {
+      height: 22px;
+      background: #f0f4f8;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .bar-fill {
+      height: 100%;
+      border-radius: 6px;
+      min-width: 6px;
+      display: flex;
+      align-items: center;
+      padding-left: 8px;
+      transition: width 1s cubic-bezier(.4,0,.2,1);
+    }
+
+    .cat-count {
+      font-size: .85rem;
+      font-weight: 700;
+      text-align: right;
+      color: var(--text-muted);
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Findings                                                             */
+    /* ------------------------------------------------------------------ */
+    .findings-section {
+      padding: 36px 0 48px;
+    }
+
+    .severity-group {
+      margin-bottom: 32px;
+    }
+
+    .severity-group-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .severity-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 14px;
+      border-radius: 20px;
+      font-size: .72rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      color: var(--white);
+    }
+
+    .severity-badge.critical { background: var(--critical); }
+    .severity-badge.high     { background: var(--high); }
+    .severity-badge.medium   { background: var(--medium); }
+    .severity-badge.low      { background: var(--low); }
+    .severity-badge.info     { background: var(--info); }
+
+    .severity-count {
+      font-size: .8rem;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    /* Finding card */
+    .finding-card {
+      background: var(--white);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+      margin-bottom: 10px;
+      border-left: 4px solid transparent;
+      overflow: hidden;
+      transition: box-shadow .2s;
+    }
+
+    .finding-card:hover { box-shadow: var(--shadow-md); }
+    .finding-card.critical { border-left-color: var(--critical); }
+    .finding-card.high     { border-left-color: var(--high); }
+    .finding-card.medium   { border-left-color: var(--medium); }
+    .finding-card.low      { border-left-color: var(--low); }
+    .finding-card.info     { border-left-color: var(--info); }
+
+    .finding-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      cursor: pointer;
+      user-select: none;
+      gap: 12px;
+    }
+
+    .finding-header-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .finding-id {
+      font-size: .72rem;
+      font-weight: 700;
+      color: var(--text-muted);
+      letter-spacing: .05em;
+      white-space: nowrap;
+      background: #f0f4f8;
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+
+    .finding-name {
+      font-size: .95rem;
+      font-weight: 600;
+      color: var(--text);
+      flex: 1;
+      min-width: 0;
+    }
+
+    .finding-category-tag {
+      font-size: .7rem;
+      font-weight: 600;
+      color: var(--navy);
+      background: #e8ecf8;
+      border-radius: 6px;
+      padding: 2px 10px;
+      white-space: nowrap;
+    }
+
+    .finding-chevron {
+      color: var(--text-muted);
+      font-size: 1rem;
+      transition: transform .3s ease;
+      flex-shrink: 0;
+    }
+
+    .finding-card.open .finding-chevron {
+      transform: rotate(180deg);
+    }
+
+    .finding-preview {
+      padding: 0 20px 14px 20px;
+      font-size: .83rem;
+      color: var(--text-muted);
+      border-top: 1px solid transparent;
+    }
+
+    .finding-body {
+      display: none;
+      padding: 0 20px 20px;
+      border-top: 1px solid var(--border);
+    }
+
+    .finding-card.open .finding-body {
+      display: block;
+    }
+
+    .finding-card.open .finding-preview {
+      display: none;
+    }
+
+    .finding-section-label {
+      font-size: .7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      color: var(--text-muted);
+      margin: 16px 0 6px;
+    }
+
+    .finding-section-label:first-child { margin-top: 14px; }
+
+    .finding-body p {
+      font-size: .88rem;
+      color: var(--text);
+      line-height: 1.65;
+    }
+
+    .finding-body .details-box {
+      background: #f7f9fc;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 14px;
+      font-size: .82rem;
+      color: #4a5568;
+      line-height: 1.6;
+      font-family: "SF Mono", "Fira Code", monospace;
+    }
+
+    .recommendation-box {
+      background: #f0fdf4;
+      border: 1px solid #c6f6d5;
+      border-radius: var(--radius-sm);
+      padding: 12px 16px;
+      font-size: .88rem;
+      color: #276749;
+      line-height: 1.65;
+    }
+
+    .ai-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: .68rem;
+      font-weight: 700;
+      color: #553c9a;
+      background: #faf5ff;
+      border: 1px solid #d6bcfa;
+      border-radius: 4px;
+      padding: 1px 7px;
+      margin-bottom: 6px;
+    }
+
+    /* Empty state */
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--text-muted);
+    }
+
+    .empty-state .score-big {
+      font-size: 5rem;
+      margin-bottom: 8px;
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Footer                                                               */
+    /* ------------------------------------------------------------------ */
+    footer {
+      background: var(--navy);
+      color: rgba(255,255,255,.6);
+      padding: 28px 0;
+      font-size: .8rem;
+    }
+
+    .footer-inner {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .footer-inner a { color: rgba(255,255,255,.6); text-decoration: none; }
+
+    /* ------------------------------------------------------------------ */
+    /* Utility                                                              */
+    /* ------------------------------------------------------------------ */
+    .text-critical { color: var(--critical); }
+    .text-high     { color: var(--high); }
+    .text-medium   { color: var(--medium); }
+    .text-low      { color: var(--low); }
+    .text-info     { color: var(--info); }
+
+    /* ------------------------------------------------------------------ */
+    /* Print styles                                                         */
+    /* ------------------------------------------------------------------ */
+    @media print {
+      header { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+      .finding-body   { display: block !important; }
+      .finding-chevron { display: none; }
+      .finding-preview { display: none !important; }
+      .finding-card   { box-shadow: none; break-inside: avoid; }
+      .gauge-card     { break-inside: avoid; }
+      body            { background: white; }
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Responsive                                                           */
+    /* ------------------------------------------------------------------ */
+    @media (max-width: 820px) {
+      .summary-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      .gauge-card { grid-column: span 2; flex-direction: row; gap: 20px; }
+      .cat-row    { grid-template-columns: 110px 1fr 38px; }
+    }
+
+    @media (max-width: 520px) {
+      .summary-grid { grid-template-columns: 1fr 1fr; }
+      .header-right { display: none; }
+      .finding-category-tag { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ================================================================== -->
+<!-- HEADER                                                               -->
+<!-- ================================================================== -->
+<header>
+  <div class="container">
+    <div class="header-inner">
+      <div class="header-left">
+        <div class="sf-icon">&#9889;</div>
+        <div>
+          <div class="header-title">Org Health Assessment</div>
+          <div class="header-meta">
+            <span>{{ report.org_name }}</span>
+            {% if report.org_type %}<span>{{ report.org_type }}</span>{% endif %}
+            {% if report.instance %}<span>{{ report.instance }}</span>{% endif %}
+            {% if report.is_sandbox %}<span>Sandbox</span>{% endif %}
+          </div>
+        </div>
+      </div>
+      <div class="header-right">
+        <div class="ai-badge">
+          <span class="ai-dot"></span>
+          Powered by Anthropic Claude AI
+        </div>
+        <div class="header-timestamp">Generated {{ report.generated_at }}</div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ================================================================== -->
+<!-- EXECUTIVE SUMMARY                                                    -->
+<!-- ================================================================== -->
+<section class="executive-summary">
+  <div class="container">
+    <div class="section-title">Executive Summary</div>
+    <div class="summary-grid">
+
+      <!-- Critical -->
+      <div class="stat-card critical">
+        <div class="stat-label">Critical</div>
+        <div class="stat-number" data-count="{{ report.summary.critical_count }}">0</div>
+        <div class="stat-sub">findings requiring urgent action</div>
+      </div>
+
+      <!-- High -->
+      <div class="stat-card high">
+        <div class="stat-label">High</div>
+        <div class="stat-number" data-count="{{ report.summary.high_count }}">0</div>
+        <div class="stat-sub">high-priority issues found</div>
+      </div>
+
+      <!-- Medium -->
+      <div class="stat-card medium">
+        <div class="stat-label">Medium</div>
+        <div class="stat-number" data-count="{{ report.summary.medium_count }}">0</div>
+        <div class="stat-sub">medium-risk findings</div>
+      </div>
+
+      <!-- Low -->
+      <div class="stat-card low">
+        <div class="stat-label">Low</div>
+        <div class="stat-number" data-count="{{ report.summary.low_count }}">0</div>
+        <div class="stat-sub">low-impact observations</div>
+      </div>
+
+      <!-- Health Gauge -->
+      <div class="gauge-card">
+        <div class="gauge-title">Health Score</div>
+        <div class="gauge-wrapper">
+          <svg class="gauge-svg" viewBox="0 0 200 200">
+            <circle class="gauge-track" cx="100" cy="100" r="80"/>
+            <circle
+              class="gauge-progress"
+              cx="100" cy="100" r="80"
+              stroke="{{ report.summary.score_color }}"
+              stroke-dasharray="{{ report.summary.gauge_circumference }}"
+              stroke-dashoffset="{{ report.summary.gauge_circumference }}"
+              data-filled="{{ report.summary.gauge_filled }}"
+              data-circumference="{{ report.summary.gauge_circumference }}"
+            />
+          </svg>
+          <div class="gauge-center">
+            <div class="gauge-score-text" style="color:{{ report.summary.score_color }}"
+                 data-count="{{ report.summary.health_score }}">0</div>
+            <div class="gauge-score-label">/ 100</div>
+          </div>
+        </div>
+        <div class="gauge-status-badge"
+             style="background:{{ report.summary.score_color }}20;
+                    color:{{ report.summary.score_color }};
+                    border:1px solid {{ report.summary.score_color }}40;">
+          {{ report.summary.score_label }}
+        </div>
+      </div>
+
+    </div><!-- /summary-grid -->
+  </div>
+</section>
+
+<!-- ================================================================== -->
+<!-- CATEGORY BREAKDOWN                                                   -->
+<!-- ================================================================== -->
+{% if report.category_stats %}
+<section class="category-breakdown">
+  <div class="container">
+    <div class="section-title">Findings by Category</div>
+    <div class="breakdown-card">
+      {% for cat in report.category_stats %}
+      <div class="cat-row">
+        <div class="cat-name">{{ cat.name }}</div>
+        <div class="bar-track">
+          <div class="bar-fill"
+               style="width:0%; background:{{ cat.color }};"
+               data-target-width="{{ cat.bar_width_pct }}">
+          </div>
+        </div>
+        <div class="cat-count" style="color:{{ cat.color }};">{{ cat.count }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<!-- ================================================================== -->
+<!-- FINDINGS                                                             -->
+<!-- ================================================================== -->
+<section class="findings-section">
+  <div class="container">
+    <div class="section-title">Findings Detail</div>
+
+    {% if not report.fail_findings %}
+    <div class="empty-state">
+      <div class="score-big">&#10003;</div>
+      <p>No failing checks detected. Your org is in great shape!</p>
+    </div>
+    {% else %}
+
+    {% for severity in report.severity_order %}
+    {% set group = report.severity_groups[severity] %}
+    <div class="severity-group">
+      <div class="severity-group-header">
+        <span class="severity-badge {{ severity }}">
+          &#9679; {{ severity | upper }}
+        </span>
+        <span class="severity-count">{{ group | length }} finding{% if group | length != 1 %}s{% endif %}</span>
+      </div>
+
+      {% for finding in group %}
+      <div class="finding-card {{ finding.severity }}" id="finding-{{ finding.id }}">
+        <div class="finding-header" onclick="toggleFinding(this.parentElement)">
+          <div class="finding-header-left">
+            <span class="finding-id">{{ finding.id }}</span>
+            <span class="finding-name">{{ finding.name }}</span>
+            <span class="finding-category-tag">{{ finding.category }}</span>
+          </div>
+          <span class="finding-chevron">&#8964;</span>
+        </div>
+
+        <!-- Collapsed preview -->
+        <div class="finding-preview">
+          {% if finding.ai_analysis %}
+            {{ finding.ai_analysis[:140] }}{% if finding.ai_analysis | length > 140 %}…{% endif %}
+          {% else %}
+            {{ finding.details[:140] }}{% if finding.details | length > 140 %}…{% endif %}
+          {% endif %}
+        </div>
+
+        <!-- Expanded body -->
+        <div class="finding-body">
+          {% if finding.ai_analysis %}
+          <div class="finding-section-label">
+            <span class="ai-label">&#9733; Claude AI</span> Analysis
+          </div>
+          <p>{{ finding.ai_analysis }}</p>
+          {% endif %}
+
+          {% if finding.recommendation %}
+          <div class="finding-section-label">Recommendation</div>
+          <div class="recommendation-box">{{ finding.recommendation }}</div>
+          {% endif %}
+
+          <div class="finding-section-label">Technical Detail</div>
+          <div class="details-box">{{ finding.details }}</div>
+
+          {% if finding.description %}
+          <div class="finding-section-label">Check Description</div>
+          <p style="color:var(--text-muted); font-size:.83rem;">{{ finding.description }}</p>
+          {% endif %}
+        </div>
+      </div><!-- /finding-card -->
+      {% endfor %}
+
+    </div><!-- /severity-group -->
+    {% endfor %}
+
+    {% endif %}
+  </div>
+</section>
+
+<!-- ================================================================== -->
+<!-- FOOTER                                                               -->
+<!-- ================================================================== -->
+<footer>
+  <div class="container">
+    <div class="footer-inner">
+      <span>Generated by <strong>Salesforce Org Analyser</strong> &mdash; Powered by <strong>Anthropic Claude AI</strong></span>
+      <span>{{ report.generated_at }}</span>
+    </div>
+  </div>
+</footer>
+
+<!-- ================================================================== -->
+<!-- JAVASCRIPT                                                           -->
+<!-- ================================================================== -->
+<script>
+  /* ------------------------------------------------------------------ */
+  /* Count-up animation                                                   */
+  /* ------------------------------------------------------------------ */
+  function animateCount(el, target, duration) {
+    if (target === 0) { el.textContent = '0'; return; }
+    const start     = performance.now();
+    const easeOut   = t => 1 - Math.pow(1 - t, 3);
+    function step(now) {
+      const elapsed  = now - start;
+      const progress = Math.min(elapsed / duration, 1);
+      el.textContent = Math.round(easeOut(progress) * target);
+      if (progress < 1) requestAnimationFrame(step);
+      else el.textContent = target;
+    }
+    requestAnimationFrame(step);
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Gauge animation                                                      */
+  /* ------------------------------------------------------------------ */
+  function animateGauge() {
+    const arc          = document.querySelector('.gauge-progress');
+    const circumference = parseFloat(arc.dataset.circumference);
+    const filled       = parseFloat(arc.dataset.filled);
+    const offset       = circumference - filled;
+    // Trigger CSS transition
+    setTimeout(() => { arc.style.strokeDashoffset = offset; }, 150);
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Bar chart animation                                                  */
+  /* ------------------------------------------------------------------ */
+  function animateBars() {
+    document.querySelectorAll('.bar-fill').forEach(bar => {
+      const target = bar.dataset.targetWidth + '%';
+      setTimeout(() => { bar.style.width = target; }, 200);
+    });
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Toggle finding cards                                                 */
+  /* ------------------------------------------------------------------ */
+  function toggleFinding(card) {
+    card.classList.toggle('open');
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Init on load                                                         */
+  /* ------------------------------------------------------------------ */
+  window.addEventListener('DOMContentLoaded', () => {
+    // Stat card count-ups
+    document.querySelectorAll('.stat-number[data-count]').forEach(el => {
+      animateCount(el, parseInt(el.dataset.count, 10), 1200);
+    });
+
+    // Gauge score count-up
+    document.querySelectorAll('.gauge-score-text[data-count]').forEach(el => {
+      animateCount(el, parseInt(el.dataset.count, 10), 1600);
+    });
+
+    animateGauge();
+    animateBars();
+
+    // Auto-expand the first critical finding if any
+    const firstCritical = document.querySelector('.finding-card.critical');
+    if (firstCritical) firstCritical.classList.add('open');
+  });
+</script>
+</body>
+</html>
