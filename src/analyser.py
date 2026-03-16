@@ -1,2 +1,606 @@
 # Runs each health check defined in checks_config.yaml against the data
 # returned by salesforce_client.py and produces structured findings.
+
+"""
+analyser.py
+-----------
+OrgAnalyser evaluates a Salesforce org against the checks defined in
+config/checks_config.yaml and enriches each finding with AI commentary
+from Claude (claude-sonnet-4-6).
+
+Usage:
+    from src.salesforce_client import SalesforceClient
+    from src.analyser import OrgAnalyser
+
+    client = SalesforceClient()
+    client.connect()
+    org_data = {
+        "security":    client.get_user_security_data(),
+        "permissions": client.get_permission_sets_data(),
+        "automation":  client.get_automation_data(),
+        "data_model":  client.get_data_model_data(),
+        "apex":        client.get_apex_code_data(),
+    }
+    analyser = OrgAnalyser()
+    report = analyser.analyse(org_data)
+"""
+
+import os
+from pathlib import Path
+from typing import Any
+
+import anthropic
+import yaml
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Path resolution: works regardless of where the script is invoked from
+_ROOT = Path(__file__).resolve().parent.parent
+_CONFIG_PATH = _ROOT / "config" / "checks_config.yaml"
+
+# Scoring weights per severity
+_SEVERITY_WEIGHTS = {
+    "critical": 15,
+    "high":     8,
+    "medium":   3,
+    "low":      1,
+    "info":     0,
+}
+
+# Claude model used for AI analysis
+_ANALYSIS_MODEL = "claude-sonnet-4-6"
+
+
+class OrgAnalyser:
+    """
+    Runs health checks against raw Salesforce org data and produces a
+    structured report enriched with AI recommendations.
+    """
+
+    def __init__(self):
+        self._checks: list[dict] = self._load_checks()
+        self._client = anthropic.Anthropic(
+            api_key=os.getenv("ANTHROPIC_API_KEY")
+        )
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def analyse(self, org_data: dict) -> dict:
+        """
+        Run all enabled health checks against the collected org data.
+
+        Args:
+            org_data: Dict produced by collecting all SalesforceClient data
+                      methods. Expected keys: security, permissions,
+                      automation, data_model, apex.
+
+        Returns:
+            {
+                "summary": {
+                    "health_score": int (0-100),
+                    "total_findings": int,
+                    "critical_count": int,
+                    "high_count":     int,
+                    "medium_count":   int,
+                    "low_count":      int,
+                    "info_count":     int,
+                },
+                "findings": [
+                    {
+                        "id":             str,
+                        "category":       str,
+                        "name":           str,
+                        "severity":       str,
+                        "status":         "FAIL" | "PASS" | "INFO",
+                        "details":        str,
+                        "ai_analysis":    str,
+                        "recommendation": str,
+                    },
+                    ...
+                ]
+            }
+        """
+        print("\nRunning org health checks ...")
+        raw_findings: list[dict] = []
+
+        raw_findings.extend(self._evaluate_security(org_data))
+        raw_findings.extend(self._evaluate_automations(org_data))
+        raw_findings.extend(self._evaluate_data_model(org_data))
+
+        # Only FAIL findings contribute to the score
+        failed = [f for f in raw_findings if f["status"] == "FAIL"]
+
+        print(f"  Checks completed: {len(raw_findings)} | Failed: {len(failed)}")
+        print("Enriching findings with AI analysis ...")
+
+        enriched_findings = []
+        for finding in raw_findings:
+            if finding["status"] == "FAIL":
+                ai_result = self._get_ai_analysis(finding)
+                finding["ai_analysis"]    = ai_result.get("analysis", "")
+                finding["recommendation"] = ai_result.get("recommendation", "")
+            else:
+                finding["ai_analysis"]    = ""
+                finding["recommendation"] = ""
+            enriched_findings.append(finding)
+
+        # Count by severity among FAIL findings only
+        severity_counts = {s: 0 for s in _SEVERITY_WEIGHTS}
+        for f in failed:
+            sev = f.get("severity", "info").lower()
+            severity_counts[sev] = severity_counts.get(sev, 0) + 1
+
+        health_score = self._calculate_health_score(severity_counts)
+
+        return {
+            "summary": {
+                "health_score":   health_score,
+                "total_findings": len(failed),
+                "critical_count": severity_counts["critical"],
+                "high_count":     severity_counts["high"],
+                "medium_count":   severity_counts["medium"],
+                "low_count":      severity_counts["low"],
+                "info_count":     severity_counts["info"],
+            },
+            "findings": enriched_findings,
+        }
+
+    # ------------------------------------------------------------------
+    # Config loading
+    # ------------------------------------------------------------------
+
+    def _load_checks(self) -> list[dict]:
+        """Load and parse checks_config.yaml."""
+        with open(_CONFIG_PATH, "r") as f:
+            config = yaml.safe_load(f)
+        checks = config.get("checks", [])
+        enabled = [c for c in checks if c.get("enabled", True)]
+        print(f"Loaded {len(enabled)} enabled checks from {_CONFIG_PATH.name}")
+        return enabled
+
+    def _get_check(self, check_id: str) -> dict | None:
+        """Return a check config by its ID, or None if not found / disabled."""
+        for c in self._checks:
+            if c["id"] == check_id:
+                return c
+        return None
+
+    # ------------------------------------------------------------------
+    # Security checks
+    # ------------------------------------------------------------------
+
+    def _evaluate_security(self, org_data: dict) -> list[dict]:
+        """Run all enabled Security checks and return raw findings."""
+        findings = []
+        security  = org_data.get("security", {})
+        perms     = org_data.get("permissions", {})
+
+        # SEC-001 — System Administrators with Active Sessions
+        check = self._get_check("SEC-001")
+        if check:
+            sys_admins  = security.get("sys_admin_users", [])
+            admin_count = len(sys_admins)
+            threshold   = check.get("threshold", {}).get("max_count", 5)
+            status      = "FAIL" if admin_count > threshold else "PASS"
+            admin_names = [f"{a['name']} ({a['username']})" for a in sys_admins[:10]]
+            details = (
+                f"{admin_count} active System Administrator user(s) found "
+                f"(threshold: {threshold}). "
+                + (f"Admins: {', '.join(admin_names)}" if admin_names else "")
+            )
+            findings.append(self._make_finding(check, status, details))
+
+        # SEC-002 — Users with Modify All Data Permission
+        check = self._get_check("SEC-002")
+        if check:
+            dangerous = perms.get("dangerous_perm_sets", [])
+            modify_all = [ps for ps in dangerous if ps.get("modify_all")]
+            threshold  = check.get("threshold", {}).get("max_count", 3)
+            status     = "FAIL" if len(modify_all) > threshold else "PASS"
+            names = [ps["label"] for ps in modify_all[:10]]
+            details = (
+                f"{len(modify_all)} permission set(s) grant Modify All Data "
+                f"(threshold: {threshold}). "
+                + (f"Sets: {', '.join(names)}" if names else "")
+            )
+            findings.append(self._make_finding(check, status, details))
+
+        # SEC-003 — Profiles with View All Data Permission
+        check = self._get_check("SEC-003")
+        if check:
+            view_all  = [ps for ps in perms.get("dangerous_perm_sets", []) if ps.get("view_all")]
+            threshold = check.get("threshold", {}).get("max_count", 2)
+            status    = "FAIL" if len(view_all) > threshold else "PASS"
+            names = [ps["label"] for ps in view_all[:10]]
+            details = (
+                f"{len(view_all)} permission set(s) grant View All Data "
+                f"(threshold: {threshold}). "
+                + (f"Sets: {', '.join(names)}" if names else "")
+            )
+            findings.append(self._make_finding(check, status, details))
+
+        # SEC-005 — MFA Enforcement (informational — requires metadata API to verify)
+        check = self._get_check("SEC-005")
+        if check:
+            details = (
+                "MFA enforcement status could not be automatically verified via the REST API. "
+                "Manual review of Setup > Identity > Identity Verification is recommended."
+            )
+            findings.append(self._make_finding(check, "INFO", details))
+
+        # SEC-006 — Login IP Range Restrictions (informational summary)
+        check = self._get_check("SEC-006")
+        if check:
+            total_users = security.get("total_active_users", 0)
+            details = (
+                f"The org has {total_users} active internal users. "
+                "Profile-level IP range restrictions cannot be queried via SOQL REST API alone. "
+                "Review Login IP Ranges in Setup > Profiles for sensitive profiles."
+            )
+            findings.append(self._make_finding(check, "INFO", details))
+
+        # SEC-010 — API-Only Users Without IP Restrictions
+        check = self._get_check("SEC-010")
+        if check:
+            api_users = security.get("integration_users", [])
+            if api_users:
+                names    = [f"{u['name']} ({u['username']})" for u in api_users[:10]]
+                status   = "FAIL"
+                details  = (
+                    f"{len(api_users)} likely integration/API user(s) detected "
+                    f"that may lack IP restrictions: {', '.join(names)}. "
+                    "Verify each user's profile has Login IP Ranges configured."
+                )
+            else:
+                status  = "PASS"
+                details = "No obvious integration/API user accounts detected."
+            findings.append(self._make_finding(check, status, details))
+
+        # SEC-011 — Permission Sets Granting Admin-Level Access
+        check = self._get_check("SEC-011")
+        if check:
+            all_dangerous = perms.get("dangerous_perm_sets", [])
+            # Admin-equivalent = both manage_users AND modify_all
+            admin_equiv = [
+                ps for ps in all_dangerous
+                if ps.get("modify_all") and ps.get("manage_users")
+            ]
+            if admin_equiv:
+                names   = [ps["label"] for ps in admin_equiv[:10]]
+                status  = "FAIL"
+                details = (
+                    f"{len(admin_equiv)} permission set(s) combine Modify All Data "
+                    f"+ Manage Users (admin-equivalent): {', '.join(names)}."
+                )
+            else:
+                status  = "PASS"
+                details = "No permission sets found combining Modify All Data and Manage Users."
+            findings.append(self._make_finding(check, status, details))
+
+        return findings
+
+    # ------------------------------------------------------------------
+    # Automation checks
+    # ------------------------------------------------------------------
+
+    def _evaluate_automations(self, org_data: dict) -> list[dict]:
+        """Run all enabled Automation checks and return raw findings."""
+        findings = []
+        automation = org_data.get("automation", {})
+        apex       = org_data.get("apex", {})
+
+        # AUTO-001 — Active Process Builders (Legacy)
+        check = self._get_check("AUTO-001")
+        if check:
+            pb_count  = automation.get("legacy_process_builders", 0)
+            threshold = check.get("threshold", {}).get("max_count", 0)
+            status    = "FAIL" if pb_count > threshold else "PASS"
+            details   = (
+                f"{pb_count} active Process Builder automation(s) found "
+                f"(threshold: {threshold}). Salesforce has deprecated Process Builder."
+            )
+            findings.append(self._make_finding(check, status, details))
+
+        # AUTO-002 — Active Workflow Rules (Legacy)
+        check = self._get_check("AUTO-002")
+        if check:
+            wf_count  = automation.get("legacy_workflow_rules", 0)
+            threshold = check.get("threshold", {}).get("max_count", 0)
+            status    = "FAIL" if wf_count > threshold else "PASS"
+            details   = (
+                f"{wf_count} active Workflow Rule(s) found "
+                f"(threshold: {threshold}). Salesforce recommends migration to Flow."
+            )
+            findings.append(self._make_finding(check, status, details))
+
+        # AUTO-003 — Multiple Triggers on the Same Object
+        check = self._get_check("AUTO-003")
+        if check:
+            multi_trigger_objects = automation.get("objects_multi_triggers", [])
+            threshold = check.get("threshold", {}).get("max_triggers_per_object", 1)
+            if multi_trigger_objects:
+                status  = "FAIL"
+                details = (
+                    f"{len(multi_trigger_objects)} object(s) have more than "
+                    f"{threshold} active Apex Trigger(s): "
+                    f"{', '.join(multi_trigger_objects[:10])}."
+                )
+            else:
+                status  = "PASS"
+                details = "All objects have at most one active Apex Trigger."
+            findings.append(self._make_finding(check, status, details))
+
+        # AUTO-006 — Apex Triggers Without Test Coverage (informational — needs ApexCodeCoverage)
+        check = self._get_check("AUTO-006")
+        if check:
+            total_triggers = apex.get("total_triggers", 0)
+            details = (
+                f"The org has {total_triggers} Apex Trigger(s). "
+                "Detailed per-trigger test coverage requires running tests via the Tooling API "
+                "and is not collected in this snapshot. "
+                "Verify coverage via Setup > Apex Test Execution."
+            )
+            findings.append(self._make_finding(check, "INFO", details))
+
+        # AUTO-007 — Overlapping Automation (Flow + Trigger on same object/event)
+        check = self._get_check("AUTO-007")
+        if check:
+            trigger_objects = set(automation.get("triggers_by_object", {}).keys())
+            flow_objects    = set()
+            for flow in automation.get("active_flows", []):
+                if flow.get("process_type") in ("AutoLaunchedFlow", "Workflow") and flow.get("object"):
+                    flow_objects.add(flow["object"])
+            overlap = trigger_objects & flow_objects
+            if overlap:
+                status  = "FAIL"
+                details = (
+                    f"{len(overlap)} object(s) have both an active Apex Trigger "
+                    f"and an active Flow: {', '.join(sorted(overlap)[:10])}. "
+                    "Review for potential double-execution or conflicts."
+                )
+            else:
+                status  = "PASS"
+                details = "No objects detected with overlapping Trigger and Flow automation."
+            findings.append(self._make_finding(check, status, details))
+
+        # AUTO-009 — Active Flows With No Description
+        check = self._get_check("AUTO-009")
+        if check:
+            total_flows = automation.get("total_active_flows", 0)
+            # FlowDefinitionView doesn't return Description via SOQL — surface as informational
+            details = (
+                f"The org has {total_flows} active Flow(s). "
+                "Flow descriptions cannot be retrieved via SOQL; "
+                "review via Setup > Flows to ensure all flows are documented."
+            )
+            findings.append(self._make_finding(check, "INFO", details))
+
+        return findings
+
+    # ------------------------------------------------------------------
+    # Data model checks
+    # ------------------------------------------------------------------
+
+    def _evaluate_data_model(self, org_data: dict) -> list[dict]:
+        """Run all enabled Data Model and Governance checks and return raw findings."""
+        findings = []
+        data_model = org_data.get("data_model", {})
+        apex       = org_data.get("apex", {})
+
+        # DATA-001 — Custom Objects Without Description
+        check = self._get_check("DATA-001")
+        if check:
+            no_desc   = data_model.get("objects_without_description", [])
+            total     = data_model.get("total_custom_objects", 0)
+            if no_desc:
+                status  = "FAIL"
+                pct     = round(len(no_desc) / total * 100) if total else 0
+                details = (
+                    f"{len(no_desc)} of {total} custom object(s) ({pct}%) "
+                    f"have no description: {', '.join(no_desc[:10])}"
+                    + (" ..." if len(no_desc) > 10 else ".")
+                )
+            else:
+                status  = "PASS"
+                details = f"All {total} custom object(s) have descriptions."
+            findings.append(self._make_finding(check, status, details))
+
+        # DATA-002 — Custom Fields Without Description
+        check = self._get_check("DATA-002")
+        if check:
+            objects_over = data_model.get("objects_over_field_limit", [])
+            total_objs   = data_model.get("total_custom_objects", 0)
+            threshold    = check.get("threshold", {}).get("min_coverage_percent", 80)
+            # We use objects_over_field_limit as a proxy for objects needing field-level attention
+            status  = "INFO"
+            details = (
+                f"{len(objects_over)} custom object(s) have more than 50 custom fields "
+                f"(potential field sprawl): "
+                + (', '.join(objects_over[:10]) if objects_over else "none")
+                + ". Full field-description coverage requires per-field metadata API inspection."
+            )
+            findings.append(self._make_finding(check, status, details))
+
+        # DATA-003 — Objects Approaching Record Limit
+        check = self._get_check("DATA-003")
+        if check:
+            details = (
+                "Record counts per object require the sforce-limit-info header or "
+                "per-object COUNT() queries. This check is captured as informational; "
+                "review record counts in Setup > Storage Usage."
+            )
+            findings.append(self._make_finding(check, "INFO", details))
+
+        # GOV-002 / GOV-003 — Apex Test Coverage (informational)
+        check = self._get_check("GOV-002")
+        if check:
+            total_classes = apex.get("total_classes", 0)
+            details = (
+                f"The org has {total_classes} Apex class(es). "
+                "Per-class test coverage requires running tests via the Tooling API. "
+                "Verify overall coverage via Setup > Apex Test Execution (must be ≥ 75%)."
+            )
+            findings.append(self._make_finding(check, "INFO", details))
+
+        # GOV-007 — Deprecated API Versions in Use
+        check = self._get_check("GOV-007")
+        if check:
+            below_min  = apex.get("classes_below_min_api", [])
+            threshold  = check.get("threshold", {}).get("min_api_version", 50.0)
+            if below_min:
+                status  = "FAIL"
+                names   = [f"{c['name']} (v{c['api_version']})" for c in below_min[:10]]
+                details = (
+                    f"{len(below_min)} Apex class(es) use an API version below {threshold}: "
+                    f"{', '.join(names)}"
+                    + (" ..." if len(below_min) > 10 else ".")
+                )
+            else:
+                status  = "PASS"
+                details = (
+                    f"All Apex classes use API version {threshold} or higher."
+                )
+            findings.append(self._make_finding(check, status, details))
+
+        # GOV-005 — Hardcoded IDs in Apex (using DATA pattern)
+        # Map to a governance-style finding
+        check = self._get_check("GOV-005")
+        if check:
+            classes_with_ids  = apex.get("classes_with_hardcoded_ids", [])
+            triggers_with_ids = apex.get("triggers_with_hardcoded_ids", [])
+            all_with_ids = classes_with_ids + triggers_with_ids
+            if all_with_ids:
+                status  = "FAIL"
+                details = (
+                    f"{len(all_with_ids)} Apex file(s) contain potential hardcoded Salesforce IDs "
+                    f"(classes: {len(classes_with_ids)}, triggers: {len(triggers_with_ids)}). "
+                    f"Examples: {', '.join(all_with_ids[:8])}"
+                    + (" ..." if len(all_with_ids) > 8 else ".")
+                )
+            else:
+                status  = "PASS"
+                details = "No hardcoded Salesforce IDs detected in Apex classes or triggers."
+            # Re-use GOV-005 slot with a remapped description
+            check = dict(check)  # copy to avoid mutating the config
+            check["name"]        = "Hardcoded Salesforce IDs in Apex Code"
+            check["severity"]    = "high"
+            check["description"] = (
+                "Hardcoded Salesforce record IDs in Apex break when deployed between orgs "
+                "and are a maintenance liability."
+            )
+            findings.append(self._make_finding(check, status, details))
+
+        return findings
+
+    # ------------------------------------------------------------------
+    # AI analysis
+    # ------------------------------------------------------------------
+
+    def _get_ai_analysis(self, finding: dict) -> dict:
+        """
+        Call Claude to produce a concise analysis and actionable recommendation
+        for a single FAIL finding.
+
+        Returns:
+            {"analysis": str, "recommendation": str}
+        """
+        system_prompt = (
+            "You are a Senior Salesforce Solutions Architect with deep expertise in "
+            "org health, security best practices, automation governance, and technical debt. "
+            "You are reviewing automated health check findings for a client's Salesforce org. "
+            "Be concise, practical, and prioritise actionable guidance. "
+            "Use plain English — no markdown headers or bullet points in your response."
+        )
+
+        user_prompt = (
+            f"Health Check Finding\n"
+            f"--------------------\n"
+            f"Check ID:   {finding['id']}\n"
+            f"Category:   {finding['category']}\n"
+            f"Check Name: {finding['name']}\n"
+            f"Severity:   {finding['severity'].upper()}\n"
+            f"Details:    {finding['details']}\n\n"
+            "Provide two short paragraphs:\n"
+            "1. Analysis — explain the business/technical risk this finding represents.\n"
+            "2. Recommendation — the specific steps the org should take to remediate or improve."
+        )
+
+        try:
+            response = self._client.messages.create(
+                model=_ANALYSIS_MODEL,
+                max_tokens=400,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_prompt}],
+            )
+            full_text = response.content[0].text.strip()
+
+            # Split at the second paragraph boundary
+            paragraphs = [p.strip() for p in full_text.split("\n\n") if p.strip()]
+            if len(paragraphs) >= 2:
+                analysis       = paragraphs[0]
+                recommendation = "\n\n".join(paragraphs[1:])
+            else:
+                analysis       = full_text
+                recommendation = ""
+
+            return {"analysis": analysis, "recommendation": recommendation}
+
+        except anthropic.APIError as e:
+            print(f"  [WARNING] AI analysis failed for {finding['id']}: {e}")
+            return {
+                "analysis":       "AI analysis unavailable.",
+                "recommendation": "Please review this finding manually.",
+            }
+
+    # ------------------------------------------------------------------
+    # Health score
+    # ------------------------------------------------------------------
+
+    def _calculate_health_score(self, severity_counts: dict) -> int:
+        """
+        Calculate a 0-100 health score by deducting points per severity.
+
+        Deductions:
+            Critical : 15 pts each
+            High     : 8 pts each
+            Medium   : 3 pts each
+            Low      : 1 pt each
+            Info     : 0 pts
+        """
+        deductions = sum(
+            count * _SEVERITY_WEIGHTS.get(severity, 0)
+            for severity, count in severity_counts.items()
+        )
+        return max(0, 100 - deductions)
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _make_finding(check: dict, status: str, details: str) -> dict:
+        """
+        Build a standardised finding dict from a check config entry.
+
+        Args:
+            check:   The check config dict from checks_config.yaml.
+            status:  "FAIL", "PASS", or "INFO".
+            details: Human-readable description of what was found.
+
+        Returns:
+            A finding dict ready to be included in the report.
+        """
+        return {
+            "id":             check["id"],
+            "category":       check["category"],
+            "name":           check["name"],
+            "severity":       check.get("severity", "info"),
+            "status":         status,
+            "details":        details,
+            "description":    str(check.get("description", "")).strip(),
+            "ai_analysis":    "",   # populated later by _get_ai_analysis
+            "recommendation": "",  # populated later by _get_ai_analysis
+        }
