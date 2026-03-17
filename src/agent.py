@@ -1,2 +1,253 @@
-# Claude AI agent that orchestrates the org analysis workflow,
-# interprets check results, and decides follow-up actions.
+"""
+agent.py
+--------
+Main orchestrator for the Salesforce Org Health Analyser.
+
+Connects all components in sequence:
+    SalesforceClient → OrgAnalyser → ReportGenerator
+
+Usage:
+    python3 agent.py
+    python3 agent.py --config config/checks_config.yaml
+"""
+
+import sys
+import time
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load .env before importing modules that read env vars at import time
+load_dotenv()
+
+from src.salesforce_client import SalesforceClient
+from src.analyser import OrgAnalyser
+from src.report_generator import ReportGenerator
+
+_ROOT        = Path(__file__).resolve().parent.parent
+_REPORTS_DIR = _ROOT / "reports"
+
+# ANSI colours for terminal output (degrade gracefully on Windows)
+_GREEN  = "\033[92m"
+_YELLOW = "\033[93m"
+_RED    = "\033[91m"
+_CYAN   = "\033[96m"
+_BOLD   = "\033[1m"
+_RESET  = "\033[0m"
+
+
+def _banner(msg: str) -> None:
+    """Print a prominent step banner."""
+    print(f"\n{_CYAN}{_BOLD}{'─' * 55}{_RESET}")
+    print(f"{_CYAN}{_BOLD}  {msg}{_RESET}")
+    print(f"{_CYAN}{_BOLD}{'─' * 55}{_RESET}")
+
+
+def _ok(msg: str) -> None:
+    print(f"  {_GREEN}✓{_RESET}  {msg}")
+
+
+def _info(msg: str) -> None:
+    print(f"  {_YELLOW}→{_RESET}  {msg}")
+
+
+def _err(msg: str) -> None:
+    print(f"  {_RED}✗{_RESET}  {msg}", file=sys.stderr)
+
+
+class OrgHealthAgent:
+    """
+    Orchestrates the full Salesforce org health analysis pipeline:
+    connect → collect → analyse → report.
+    """
+
+    def __init__(self):
+        """
+        Initialise all components.
+        Credentials are read from environment variables (loaded from .env).
+        """
+        _REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+
+        self._client    = SalesforceClient()
+        self._analyser  = OrgAnalyser()
+        self._generator = ReportGenerator()
+        self._reports_dir = str(_REPORTS_DIR)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def run(self) -> str:
+        """
+        Execute the full analysis pipeline.
+
+        Returns:
+            Absolute path to the generated HTML report.
+
+        Raises:
+            SystemExit on connection failure.
+        """
+        start_time = time.time()
+
+        print(f"\n{_BOLD}Salesforce Org Health Analyser{_RESET}")
+        print(f"{'=' * 55}")
+
+        # ── Step 1: Connect ──────────────────────────────────────────
+        _banner("Step 1 — Connecting to Salesforce")
+        _info("Authenticating via SOAP login API ...")
+
+        connected = self._client.connect()
+        if not connected:
+            _err("Authentication failed. Check credentials in .env and retry.")
+            sys.exit(1)
+
+        # ── Step 2: Test connection ──────────────────────────────────
+        _banner("Step 2 — Verifying Connection")
+        org_info = self._client.test_connection()
+
+        if "error" in org_info:
+            _err(f"Connection test failed: {org_info['error']}")
+            sys.exit(1)
+
+        _ok(f"Connected to: {org_info.get('org_name')} "
+            f"({org_info.get('org_type')})")
+        _ok(f"Instance: {org_info.get('instance')}  |  "
+            f"Sandbox: {org_info.get('is_sandbox')}  |  "
+            f"API: {org_info.get('api_version')}")
+
+        # ── Step 3: Collect all org data ─────────────────────────────
+        _banner("Step 3 — Collecting Org Data")
+
+        _info("Collecting security data ...")
+        security_data = self._client.get_user_security_data()
+        _ok(f"Security data collected "
+            f"({security_data.get('total_active_users', 0)} active users, "
+            f"{security_data.get('sys_admin_count', 0)} sys admins)")
+
+        _info("Collecting OWD sharing settings ...")
+        owd_data = self._client.get_owd_settings()
+        _ok(f"OWD data collected "
+            f"({len(owd_data.get('standard_objects', []))} standard objects, "
+            f"{len(owd_data.get('custom_objects', []))} custom objects)")
+
+        _info("Collecting permission set data ...")
+        perm_data = self._client.get_permission_sets_data()
+        _ok(f"Permission sets collected "
+            f"({perm_data.get('total_count', 0)} total, "
+            f"{len(perm_data.get('dangerous_perm_sets', []))} flagged)")
+
+        _info("Collecting automation data ...")
+        automation_data = self._client.get_automation_data()
+        _ok(f"Automation data collected "
+            f"({automation_data.get('total_active_flows', 0)} flows, "
+            f"{automation_data.get('total_active_triggers', 0)} triggers)")
+
+        _info("Collecting data model information ...")
+        data_model_data = self._client.get_data_model_data()
+        _ok(f"Data model collected "
+            f"({data_model_data.get('total_custom_objects', 0)} custom objects)")
+
+        _info("Collecting Apex code data ...")
+        apex_data = self._client.get_apex_code_data()
+        _ok(f"Apex data collected "
+            f"({apex_data.get('total_classes', 0)} classes, "
+            f"{apex_data.get('total_triggers', 0)} triggers)")
+
+        # ── Step 4: Bundle collected data ────────────────────────────
+        org_data = {
+            "security":    security_data,
+            "owd":         owd_data,
+            "permissions": perm_data,
+            "automation":  automation_data,
+            "data_model":  data_model_data,
+            "apex":        apex_data,
+        }
+
+        # ── Step 5: Run AI analysis ──────────────────────────────────
+        _banner("Step 4 — Running Health Checks & AI Analysis")
+        _info("Evaluating checks against org data ...")
+        _info("Enriching FAIL findings with Claude AI recommendations ...")
+
+        report_data = self._analyser.analyse(org_data)
+
+        summary = report_data["summary"]
+        _ok(f"Analysis complete — "
+            f"{summary.get('total_findings', 0)} issue(s) found")
+
+        # ── Step 6: Generate HTML report ─────────────────────────────
+        _banner("Step 5 — Generating HTML Report")
+        _info("Rendering interactive report ...")
+
+        report_path = self._generator.generate(
+            report_data=report_data,
+            org_info=org_info,
+            output_dir=self._reports_dir,
+            open_browser=True,
+        )
+
+        # ── Step 7: Print terminal summary ───────────────────────────
+        elapsed = round(time.time() - start_time, 1)
+
+        print(f"\n{'=' * 55}")
+        print(f"{_BOLD}{_GREEN}  Analysis Complete{_RESET}")
+        print(f"{'=' * 55}")
+
+        crit   = summary.get("critical_count", 0)
+        high   = summary.get("high_count", 0)
+        medium = summary.get("medium_count", 0)
+        low    = summary.get("low_count", 0)
+        score  = summary.get("health_score", 0)
+
+        print(f"\n  Findings:")
+        if crit:
+            print(f"    {_RED}{_BOLD}  Critical : {crit}{_RESET}")
+        print(f"    {_YELLOW}  High     : {high}{_RESET}")
+        print(f"       Medium   : {medium}")
+        print(f"    {_GREEN}  Low      : {low}{_RESET}")
+
+        # Health score colour
+        if score >= 71:
+            score_color = _GREEN
+            score_label = "Healthy"
+        elif score >= 41:
+            score_color = _YELLOW
+            score_label = "Needs Attention"
+        else:
+            score_color = _RED
+            score_label = "Critical Risk"
+
+        print(f"\n  Health Score : "
+              f"{score_color}{_BOLD}{score}/100{_RESET} "
+              f"({score_label})")
+        print(f"  Report saved : {report_path}")
+        print(f"  Completed in : {elapsed}s")
+        print(f"{'=' * 55}\n")
+
+        return report_path
+
+
+# ── CLI entry point ──────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Salesforce Org Health Analyser — AI-powered org audit tool",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Environment variables (set in .env):\n"
+            "  SALESFORCE_USERNAME        Salesforce login username\n"
+            "  SALESFORCE_PASSWORD        Salesforce login password\n"
+            "  SALESFORCE_SECURITY_TOKEN  Security token (append to password)\n"
+            "  ANTHROPIC_API_KEY          Anthropic API key for AI analysis\n"
+        ),
+    )
+    parser.add_argument(
+        "--config",
+        default="config/checks_config.yaml",
+        help="Path to checks config YAML (default: config/checks_config.yaml)",
+    )
+    args = parser.parse_args()
+
+    agent = OrgHealthAgent()
+    agent.run()
