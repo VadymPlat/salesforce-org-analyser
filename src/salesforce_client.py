@@ -177,11 +177,22 @@ class SalesforceClient:
             print("[ERROR] SALESFORCE_USERNAME and SALESFORCE_PASSWORD must be set in .env")
             return False
 
-        print(f"Connecting to Salesforce as {username} ...")
+        # Auto-detect sandbox from instance URL; allow explicit override via env var
+        instance_url = os.getenv("SALESFORCE_INSTANCE_URL", "")
+        is_sandbox   = "sandbox" in instance_url or os.getenv("SALESFORCE_IS_SANDBOX", "").lower() == "true"
+        login_url    = (
+            "https://test.salesforce.com/services/Soap/u/59.0"
+            if is_sandbox else
+            SOAP_LOGIN_URL
+        )
 
+        print(f"Connecting to Salesforce as {username} "
+              f"({'sandbox' if is_sandbox else 'production'}) ...")
+
+        import html as _html
         soap_body = SOAP_LOGIN_BODY.format(
-            username=username,
-            password=password + token,
+            username=_html.escape(username),
+            password=_html.escape(password + token),
         )
 
         headers = {
@@ -191,7 +202,7 @@ class SalesforceClient:
 
         try:
             response = self._session.post(
-                SOAP_LOGIN_URL, data=soap_body, headers=headers, timeout=30
+                login_url, data=soap_body, headers=headers, timeout=30
             )
             # Note: SOAP uses HTTP 500 to signal a login fault — don't raise_for_status here.
             # We parse the XML body to detect success vs fault in all cases.
