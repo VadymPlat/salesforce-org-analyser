@@ -90,6 +90,11 @@ python3 agent.py --org myorg
 - Apply the same standard going forward
 - Don't repeat the same mistake twice
 
+## Environment
+Project root: /Users/vadymaus/dev/salesforce-org-analyser
+Always use this absolute path when running commands.
+Personal AI projects live in ~/dev/ — separate from client work in ~/projects/
+
 ## Key Design Decisions (don't change without discussion)
 - Authentication: username/password for dev, OAuth JWT for production
 - Vector store: numpy-based (no ChromaDB — Python 3.14 incompatible)
