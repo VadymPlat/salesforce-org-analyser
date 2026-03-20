@@ -235,6 +235,20 @@ class SalesforceClient:
         print(f"  Connected. Instance: {self._instance_url}")
         return True
 
+    def connect_with_token(self, access_token: str, instance_url: str) -> None:
+        """
+        Set credentials from an existing OAuth access token.
+
+        Used by the Streamlit web UI after the OAuth callback — bypasses the
+        SOAP login flow entirely.
+
+        Args:
+            access_token: Salesforce OAuth Bearer token.
+            instance_url: Salesforce instance URL (e.g. https://na1.salesforce.com).
+        """
+        self._access_token = access_token
+        self._instance_url = instance_url.rstrip("/")
+
     def test_connection(self) -> dict:
         """
         Verify the connection is working and return basic org information.
