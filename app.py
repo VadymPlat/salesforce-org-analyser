@@ -16,7 +16,10 @@ Required environment variables (in .env):
     ANTHROPIC_API_KEY         Anthropic API key
 """
 
+import base64
+import hashlib
 import os
+import secrets
 import sys
 import webbrowser
 from pathlib import Path
@@ -65,9 +68,35 @@ def _base_url(org_type: str, custom_domain: str = "") -> str:
     return _PROD_BASE
 
 
+def _generate_pkce() -> tuple[str, str]:
+    """
+    Generate a PKCE code_verifier and its SHA-256 code_challenge.
+
+    Returns:
+        (code_verifier, code_challenge) — both URL-safe base64, no padding.
+    """
+    code_verifier = (
+        base64.urlsafe_b64encode(secrets.token_bytes(32))
+        .rstrip(b"=")
+        .decode("utf-8")
+    )
+    code_challenge = (
+        base64.urlsafe_b64encode(
+            hashlib.sha256(code_verifier.encode()).digest()
+        )
+        .rstrip(b"=")
+        .decode("utf-8")
+    )
+    return code_verifier, code_challenge
+
+
 def get_auth_url(org_type: str, custom_domain: str = "") -> str:
     """
-    Build the Salesforce OAuth 2.0 authorization URL.
+    Build the Salesforce OAuth 2.0 authorization URL with PKCE.
+
+    Generates a fresh PKCE pair, stores the code_verifier in session state
+    so it survives the OAuth redirect, and includes the code_challenge in
+    the authorization URL.
 
     Encodes org_type (and optional custom_domain) in the `state` parameter
     so they survive the redirect back to this app.
@@ -75,12 +104,17 @@ def get_auth_url(org_type: str, custom_domain: str = "") -> str:
     base = _base_url(org_type, custom_domain)
     state = f"{org_type}|||{custom_domain}"
 
+    code_verifier, code_challenge = _generate_pkce()
+    st.session_state["pkce_code_verifier"] = code_verifier
+
     params = {
-        "response_type": "code",
-        "client_id":     CLIENT_ID,
-        "redirect_uri":  REDIRECT_URI,
-        "scope":         "full refresh_token",
-        "state":         state,
+        "response_type":         "code",
+        "client_id":             CLIENT_ID,
+        "redirect_uri":          REDIRECT_URI,
+        "scope":                 "full refresh_token",
+        "state":                 state,
+        "code_challenge":        code_challenge,
+        "code_challenge_method": "S256",
     }
     return f"{base}/services/oauth2/authorize?{urlencode(params)}"
 
@@ -93,23 +127,25 @@ def exchange_code_for_token(
     """
     Exchange an authorization code for an access token.
 
+    Includes the PKCE code_verifier (stored in session state by get_auth_url)
+    in the POST body so Salesforce can verify the challenge.
+
     Returns a dict with keys: access_token, instance_url, token_type.
     Raises RuntimeError on failure.
     """
     base = _base_url(org_type, custom_domain)
     token_url = f"{base}/services/oauth2/token"
 
-    resp = requests.post(
-        token_url,
-        data={
-            "grant_type":    "authorization_code",
-            "code":          code,
-            "client_id":     CLIENT_ID,
-            "client_secret": CLIENT_SECRET,
-            "redirect_uri":  REDIRECT_URI,
-        },
-        timeout=30,
-    )
+    payload = {
+        "grant_type":    "authorization_code",
+        "code":          code,
+        "client_id":     CLIENT_ID,
+        "client_secret": CLIENT_SECRET,
+        "redirect_uri":  REDIRECT_URI,
+        "code_verifier": st.session_state.get("pkce_code_verifier", ""),
+    }
+
+    resp = requests.post(token_url, data=payload, timeout=30)
 
     if not resp.ok:
         try:
@@ -172,6 +208,7 @@ _DEFAULTS = {
         "Security", "Automation", "Data Model", "Integrations", "Governance"
     ],
     "oauth_error":        "",
+    "pkce_code_verifier": "",
 }
 
 for key, default in _DEFAULTS.items():
