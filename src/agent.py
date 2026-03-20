@@ -77,6 +77,93 @@ class OrgHealthAgent:
     # Public API
     # ------------------------------------------------------------------
 
+    def run_with_token(
+        self,
+        access_token: str,
+        instance_url: str,
+        selected_categories: list | None = None,
+        progress_callback=None,
+    ) -> tuple[dict, str]:
+        """
+        Execute the full analysis pipeline using an existing OAuth access token.
+
+        Designed for use by the Streamlit web UI — accepts an OAuth Bearer
+        token instead of reading credentials from environment variables.
+
+        Args:
+            access_token:        Salesforce OAuth Bearer token.
+            instance_url:        Salesforce instance base URL.
+            selected_categories: Category names to analyse. None = all five.
+                                 Valid values: "Security", "Automation",
+                                 "Data Model", "Integrations", "Governance".
+            progress_callback:   Optional callable(pct: int, message: str)
+                                 called at each pipeline step for UI updates.
+
+        Returns:
+            Tuple of (report_data dict, absolute path to generated HTML report).
+        """
+        _cb = progress_callback or (lambda pct, msg: None)
+        cats = set(selected_categories) if selected_categories else {
+            "Security", "Automation", "Data Model", "Integrations", "Governance"
+        }
+
+        # ── Step 1: Inject OAuth token ────────────────────────────────
+        _cb(10, "🔄 Connecting to org...")
+        self._client.connect_with_token(access_token, instance_url)
+
+        # ── Step 2: Verify connection ─────────────────────────────────
+        org_info = self._client.test_connection()
+        if "error" in org_info:
+            raise RuntimeError(f"Connection test failed: {org_info['error']}")
+
+        # ── Step 3: Collect data per selected category ────────────────
+        _cb(25, "🔄 Collecting security data...")
+        if "Security" in cats:
+            security_data = self._client.get_user_security_data()
+            owd_data      = self._client.get_owd_settings()
+            perm_data     = self._client.get_permission_sets_data()
+        else:
+            security_data = owd_data = perm_data = {}
+
+        _cb(40, "🔄 Collecting automation data...")
+        if "Automation" in cats:
+            automation_data = self._client.get_automation_data()
+            apex_data       = self._client.get_apex_code_data()
+        else:
+            automation_data = apex_data = {}
+
+        _cb(55, "🔄 Collecting data model data...")
+        data_model_data = self._client.get_data_model_data() if "Data Model" in cats else {}
+
+        _cb(70, "🔄 Collecting integration data...")
+        # Integrations and Governance share the same data collectors for now
+        # (dedicated collectors will be added in v2).
+
+        org_data = {
+            "security":    security_data,
+            "owd":         owd_data,
+            "permissions": perm_data,
+            "automation":  automation_data,
+            "data_model":  data_model_data,
+            "apex":        apex_data if "Automation" in cats else {},
+        }
+
+        # ── Step 4: AI analysis ───────────────────────────────────────
+        _cb(85, "🤖 Running Claude AI analysis...")
+        report_data = self._analyser.analyse(org_data)
+
+        # ── Step 5: Generate report ───────────────────────────────────
+        _cb(95, "📊 Generating report...")
+        report_path = self._generator.generate(
+            report_data=report_data,
+            org_info=org_info,
+            output_dir=self._reports_dir,
+            open_browser=False,
+        )
+
+        _cb(100, "✅ Analysis complete!")
+        return report_data, report_path
+
     def run(self) -> str:
         """
         Execute the full analysis pipeline.
