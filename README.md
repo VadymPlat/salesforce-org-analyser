@@ -10,6 +10,8 @@ An AI-powered Salesforce org auditing tool that connects via REST/Metadata/Tooli
 
 Built as a portfolio project demonstrating AI-augmented cloud architecture tooling.
 
+**🔗 Live demo: [salesforce-org-analyser.streamlit.app](https://salesforce-org-analyser.streamlit.app/)**
+
 ---
 
 ## Demo
@@ -55,24 +57,27 @@ Built as a portfolio project demonstrating AI-augmented cloud architecture tooli
 ## Architecture
 
 ```
-agent.py  (orchestrator / CLI entry point)
-    │
-    ├── salesforce_client.py   ← Salesforce REST + Tooling + Metadata APIs
-    │       SOAP login (username/password/token)
-    │       Auto-detects sandbox vs production
-    │       Collects: users, profiles, perm sets, apex, triggers, objects
-    │
-    ├── analyser.py            ← Health check engine + AI enrichment
-    │       Loads checks_config.yaml (50 checks, thresholds, severity)
-    │       Evaluates Security / Automation / Data Model categories
-    │       Calls Claude claude-sonnet-4-6 per FAIL finding
-    │       Returns structured findings + 0–100 health score
-    │
-    └── report_generator.py   ← Jinja2 HTML report
-            Self-contained HTML (zero external dependencies)
-            SVG circular gauge with animation
-            Severity-grouped expandable finding cards
-            Print-ready CSS
+┌─────────────────────────┐     ┌─────────────────────────┐
+│  app.py (Streamlit UI)  │     │  src/agent.py (CLI)     │
+│  OAuth 2.0 + PKCE       │     │  SOAP login             │
+│  PRIMARY interface       │     │  SECONDARY interface     │
+└───────────┬─────────────┘     └───────────┬─────────────┘
+            │                               │
+            └───────────┬───────────────────┘
+                        ▼
+              OrgHealthAgent
+              (shared orchestrator)
+                        │
+        ┌───────────────┼───────────────┐
+        ▼               ▼               ▼
+salesforce_client.py  analyser.py  report_generator.py
+ REST + Tooling APIs   50+ checks     Jinja2 HTML
+ Data collection       Claude AI      Self-contained
+                       enrichment     report output
+        │               │
+        ▼               ▼
+  Salesforce Org    Claude API
+  (API v59.0)      (claude-sonnet-4-6)
 ```
 
 Config: `config/checks_config.yaml` — all check definitions, severity, and thresholds
@@ -187,13 +192,14 @@ Minimum score is 0. Score bands:
 | Component | Technology | Rationale |
 |-----------|-----------|-----------|
 | Language | Python 3.11+ | Broad Salesforce ecosystem, rapid development |
+| Web UI | Streamlit | Rapid Python web apps, free cloud hosting |
 | AI Engine | Anthropic Claude (`claude-sonnet-4-6`) | Best-in-class analysis quality |
-| Salesforce Auth | SOAP Login API | Works without a Connected App (zero org setup) |
+| Salesforce Auth (Web) | OAuth 2.0 + PKCE | Production-grade, no passwords stored |
+| Salesforce Auth (CLI) | SOAP Login API | Zero-setup for dev/testing |
 | Salesforce Data | REST API + Tooling API v59.0 | Full access to metadata and configuration |
 | Config | YAML (`checks_config.yaml`) | Non-developer-friendly check management |
 | Templating | Jinja2 | Clean separation of logic and presentation |
 | Report | Self-contained HTML | Zero dependencies, shareable via email/Slack |
-| Vector Store | NumPy-based (no ChromaDB) | Python 3.14 compatibility |
 | HTTP | requests + urllib3 | Simple, well-tested |
 
 ---
@@ -202,11 +208,12 @@ Minimum score is 0. Score bands:
 
 ```
 salesforce-org-analyser/
+├── app.py                    # Streamlit web UI (primary entry point)
 ├── src/
-│   ├── agent.py              # CLI entry point + orchestrator
+│   ├── agent.py              # CLI entry point + shared orchestrator
 │   ├── salesforce_client.py  # Salesforce API client
 │   ├── analyser.py           # Health check engine + AI
-│   └── report_generator.py  # HTML report generator
+│   └── report_generator.py   # HTML report generator
 ├── config/
 │   └── checks_config.yaml    # All check definitions
 ├── templates/
@@ -226,14 +233,14 @@ salesforce-org-analyser/
 ### Prerequisites
 
 - Python 3.11+
-- Salesforce org credentials (username + password + security token)
 - Anthropic API key
+- Salesforce Connected App (for web UI) **or** username/password/token (for CLI)
 
 ### Installation
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/vadymplatoshyn/salesforce-org-analyser.git
+git clone https://github.com/VadymPlat/salesforce-org-analyser.git
 cd salesforce-org-analyser
 
 # 2. Create and activate virtual environment
@@ -251,28 +258,47 @@ cp .env.example .env
 Edit `.env`:
 
 ```dotenv
-# Salesforce credentials
+# Anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+
+# --- Web UI (OAuth 2.0) ---
+SALESFORCE_CLIENT_ID=your_connected_app_consumer_key
+SALESFORCE_CLIENT_SECRET=your_connected_app_consumer_secret
+SALESFORCE_REDIRECT_URI=http://localhost:8501
+
+# --- CLI only (SOAP login) ---
 SALESFORCE_USERNAME=your@email.com
 SALESFORCE_PASSWORD=yourpassword
 SALESFORCE_SECURITY_TOKEN=yourtoken
 SALESFORCE_INSTANCE_URL=https://your-instance.salesforce.com
-
-# For sandboxes — set instance URL containing "sandbox" OR:
-# SALESFORCE_IS_SANDBOX=true
-
-# Anthropic
-ANTHROPIC_API_KEY=sk-ant-...
 ```
+
+### Running
 
 ```bash
-# 5. Test the Salesforce connection
-PYTHONPATH=. python3 test_connection.py
+# Web UI (recommended)
+streamlit run app.py
 
-# 6. Run the full analysis
+# CLI
 PYTHONPATH=. python3 src/agent.py
+
+# Test Salesforce connection
+PYTHONPATH=. python3 test_connection.py
 ```
 
-The report opens automatically in your browser. Reports are saved to `reports/`.
+The web UI opens at `http://localhost:8501`. Reports are saved to `reports/`.
+
+---
+
+## Authentication
+
+The tool supports two authentication methods:
+
+**Web UI — OAuth 2.0 Authorization Code + PKCE** (recommended)
+Requires a Salesforce Connected App. Users authenticate via browser redirect — no passwords are stored. PKCE (Proof Key for Code Exchange) prevents authorization code interception. This is the production-grade approach used by the live Streamlit deployment.
+
+**CLI — SOAP Login** (dev/testing only)
+Uses username + password + security token. Faster setup (no Connected App required), but credentials are stored in `.env`. Suitable for local development and testing, not recommended for production.
 
 ---
 
@@ -326,8 +352,10 @@ The pharmaceutical sandbox correctly flagged: no MFA enforcement, 47 admin users
 | Risk | Mitigation |
 |------|-----------|
 | Credentials in code | All credentials in `.env`, never committed (gitignored) |
+| Web UI authentication | OAuth 2.0 + PKCE — no passwords stored or transmitted |
+| CLI authentication | SOAP login — credentials in `.env`, dev/testing use only |
 | Salesforce password with special chars | XML `html.escape()` applied to SOAP body |
-| Sandbox vs production login | Auto-detected from `SALESFORCE_INSTANCE_URL` |
+| Sandbox vs production login | Auto-detected from instance URL and OAuth endpoint |
 | API key exposure | Loaded only via `os.getenv()`, never logged or printed |
 | Read-only access | Tool only reads data — no writes to the org |
 | Report contents | Reports saved locally, not transmitted anywhere |
@@ -340,7 +368,6 @@ The pharmaceutical sandbox correctly flagged: no MFA enforcement, 47 admin users
 |-----------|--------|
 | WorkflowRule not queryable on Developer Edition orgs | Workflow check returns 0 (no false positives) |
 | `EntityDefinition.Description` unavailable in some editions | Field description coverage check may under-count |
-| No OAuth JWT flow (dev only) | Production deployments should implement JWT |
 | Single-org analysis | No cross-org comparison (planned for v2) |
 | English only | Claude analysis output is in English |
 
@@ -348,7 +375,6 @@ The pharmaceutical sandbox correctly flagged: no MFA enforcement, 47 admin users
 
 ## Roadmap (v2)
 
-- [ ] OAuth JWT Bearer flow for production deployments
 - [ ] Cross-org comparison mode
 - [ ] Trend tracking (compare reports over time)
 - [ ] Slack / Teams notification integration
@@ -361,15 +387,17 @@ The pharmaceutical sandbox correctly flagged: no MFA enforcement, 47 admin users
 
 ## What I Learned
 
-1. **Salesforce SOAP login is the fastest path to zero-setup auth** — no Connected App, no OAuth flow, works against any org with username + password + token. The gotcha: passwords with special characters (`&`, `<`) break the XML body unless escaped with `html.escape()`.
+1. **OAuth 2.0 + PKCE is worth the setup cost** — migrating from SOAP login to OAuth Authorization Code with PKCE eliminated stored credentials entirely. The trick was packing the PKCE `code_verifier` inside the OAuth `state` parameter as base64 JSON so it survives the Streamlit Cloud iframe redirect.
 
-2. **AI enrichment changes the value proposition** — without Claude, the tool outputs a list of config flags. With Claude, each finding gets a *why this matters* and a *how to fix it* tailored to the specific org's context. The difference in actionability is significant.
+2. **Two interfaces, one engine** — `app.py` (Streamlit) and `src/agent.py` (CLI) both call the same `OrgHealthAgent.run_with_token()`. No code duplication means a bug fix in the analyser improves both interfaces automatically.
 
-3. **Config-driven architecture pays off immediately** — by putting all check definitions in YAML, I could tune severity and thresholds without touching Python. A non-developer Salesforce Admin could own the check library.
+3. **AI enrichment changes the value proposition** — without Claude, the tool outputs a list of config flags. With Claude, each finding gets a *why this matters* and a *how to fix it* tailored to the specific org's context. The difference in actionability is significant.
 
-4. **Self-contained HTML reports are underrated** — a single file with inline CSS and JS can be emailed, Slacked, committed to a repo, or opened offline. No server required, no broken CDN links.
+4. **Config-driven architecture pays off immediately** — by putting all check definitions in YAML, I could tune severity and thresholds without touching Python. A non-developer Salesforce Admin could own the check library.
 
-5. **PYTHONPATH discipline matters early** — Python's module resolution is unforgiving when your entry point lives inside a `src/` directory. Setting `PYTHONPATH=.` at the run command (or in a Makefile) is a cleaner solution than relative imports or installing the package in editable mode.
+5. **Self-contained HTML reports are underrated** — a single file with inline CSS and JS can be emailed, Slacked, committed to a repo, or opened offline. No server required, no broken CDN links.
+
+6. **PYTHONPATH discipline matters early** — Python's module resolution is unforgiving when your entry point lives inside a `src/` directory. Setting `PYTHONPATH=.` at the run command (or in a Makefile) is a cleaner solution than relative imports or installing the package in editable mode.
 
 ---
 
@@ -379,7 +407,7 @@ The pharmaceutical sandbox correctly flagged: no MFA enforcement, 47 admin users
 Salesforce Solutions Architect → AI/Cloud Architect
 18-month transition project — building AI-augmented tools for the Salesforce ecosystem.
 
-- GitHub: [@vadymplatoshyn](https://github.com/vadymplatoshyn)
+- GitHub: [@VadymPlat](https://github.com/VadymPlat)
 - LinkedIn: [linkedin.com/in/vadymplatoshyn](https://linkedin.com/in/vadymplatoshyn)
 
 ---
