@@ -768,20 +768,26 @@ def show_landing_page() -> None:
 
     connect_disabled = (org_type_key == "Custom Domain" and not custom_domain_valid)
 
-    if st.button(
-        "Connect to Salesforce →",
-        type="primary",
-        disabled=connect_disabled,
-        use_container_width=False,
-    ):
+    if not connect_disabled:
         auth_url = get_auth_url(org_type_key, custom_domain)
-        # JavaScript redirect — works in all browsers
-        st.markdown(
-            f'<meta http-equiv="refresh" content="0; url={auth_url}">',
-            unsafe_allow_html=True,
+        # Use st.link_button for the primary OAuth redirect. This renders a
+        # native <a> tag that navigates the top-level browser window — crucial
+        # on Streamlit Cloud where the app runs inside an iframe and
+        # Salesforce's CSP blocks framed login pages. Neither <script> nor
+        # <meta http-equiv="refresh"> work reliably inside Streamlit's
+        # sandboxed iframe, but st.link_button does.
+        st.link_button(
+            "Connect to Salesforce →",
+            url=auth_url,
+            type="primary",
+            use_container_width=False,
         )
-        st.markdown(
-            f"↗ [Click here if not redirected automatically]({auth_url})"
+    else:
+        st.button(
+            "Connect to Salesforce →",
+            type="primary",
+            disabled=True,
+            use_container_width=False,
         )
 
     st.markdown(
