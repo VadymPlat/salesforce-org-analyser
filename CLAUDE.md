@@ -8,13 +8,44 @@ An AI-powered Salesforce org health assessment tool that:
 - Produces an interactive HTML report with severity scoring
 
 ## Architecture
+
+### Entry Points (two interfaces, one shared engine)
+app.py                    — PRIMARY: Streamlit web UI (deployed to Streamlit Cloud)
+                            Uses OAuth 2.0 Authorization Code + PKCE
+                            Imports OrgHealthAgent from src/agent.py
+src/agent.py              — SECONDARY: CLI entry point + orchestrator
+                            Uses SOAP login (username/password/token)
+
+### Core Modules (shared by both entry points)
 src/salesforce_client.py  — Salesforce API connection and data collection
 src/analyser.py           — Claude AI analysis engine, loads checks_config.yaml
 src/report_generator.py   — Jinja2 HTML report generation
-src/agent.py              — Main orchestrator (connects all components)
+
+### Configuration and Templates
 config/checks_config.yaml — All check definitions, severity, thresholds
 templates/report_template.html — HTML report template
 reports/                  — Generated reports saved here (gitignored)
+
+### How It Fits Together
+app.py (OAuth 2.0 + PKCE) ──┐
+                             ├──→ OrgHealthAgent.run_with_token()
+src/agent.py (SOAP login) ──┘         │
+                                      ├── salesforce_client.py (REST + Tooling APIs)
+                                      ├── analyser.py (50+ checks + Claude AI)
+                                      └── report_generator.py (Jinja2 HTML)
+
+## Authentication — Two Flows
+
+### Web UI (app.py) — OAuth 2.0 with PKCE
+- Production-grade: Connected App + Authorization Code + PKCE
+- PKCE code_verifier packed inside OAuth `state` param as base64 JSON
+- Survives browser redirect on Streamlit Cloud iframe
+- Credentials: SALESFORCE_CLIENT_ID, SALESFORCE_CLIENT_SECRET in .env
+
+### CLI (src/agent.py) — SOAP Login
+- Dev/testing only: username + password + security token
+- Faster setup, no Connected App required
+- Credentials: SALESFORCE_USERNAME, SALESFORCE_PASSWORD, SALESFORCE_SECURITY_TOKEN in .env
 
 ## Development Workflow
 ALWAYS follow this branching strategy:
@@ -34,7 +65,7 @@ For every new feature:
 - NEVER commit .env file — it is gitignored, keep it that way
 - NEVER hardcode API keys, passwords, or tokens in code
 - NEVER log or print credentials anywhere
-- NEVER commit Salesforce credentials
+- NEVER commit Salesforce credentials or OAuth client secrets
 - All secrets go in .env file only
 - If you accidentally expose a credential — stop and rotate it immediately
 
@@ -47,17 +78,25 @@ For every new feature:
 - Use API version v59.0 for all Salesforce calls
 
 ## Running the Project
-# Setup
+
+### Web UI (primary — this is what's deployed)
+source venv/bin/activate
+streamlit run app.py
+# Opens at http://localhost:8501
+# Live deployment: https://salesforce-org-analyser.streamlit.app/
+
+### CLI (secondary — for local dev/testing)
+source venv/bin/activate
+PYTHONPATH=. python3 src/agent.py
+
+### Setup from scratch
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env  # then fill in real credentials
 
-# Test connection
-python3 test_connection.py
-
-# Run full analysis
-python3 agent.py --org myorg
+### Test Salesforce connection
+PYTHONPATH=. python3 test_connection.py
 
 ## Workflow Principles
 
@@ -96,7 +135,9 @@ Always use this absolute path when running commands.
 Personal AI projects live in ~/dev/ — separate from client work in ~/projects/
 
 ## Key Design Decisions (don't change without discussion)
-- Authentication: username/password for dev, OAuth JWT for production
+- Primary interface: Streamlit web UI (app.py) with OAuth 2.0 + PKCE
+- Secondary interface: CLI (src/agent.py) with SOAP login
+- Both interfaces share OrgHealthAgent — no code duplication
 - Vector store: numpy-based (no ChromaDB — Python 3.14 incompatible)
 - Config-driven: all check severity and thresholds in checks_config.yaml
 - Report format: single self-contained HTML file, no external dependencies
