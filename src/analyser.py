@@ -39,6 +39,42 @@ load_dotenv()
 _ROOT = Path(__file__).resolve().parent.parent
 _CONFIG_PATH = _ROOT / "config" / "checks_config.yaml"
 
+# Terminal colour codes for check result log lines
+_TERM_COLORS = {
+    "FAIL":  "\033[91m",   # red
+    "PASS":  "\033[92m",   # green
+    "INFO":  "\033[93m",   # yellow
+    "RESET": "\033[0m",
+}
+
+# Target column at which the dots end (left-pad to this width before status)
+_LOG_DOT_COLUMN = 68
+
+
+def _log_check_result(finding: dict) -> None:
+    """
+    Print a formatted one-line status line for a completed check.
+
+    Format:
+        [SEC-001] System Administrators with Active Sessions ...... FAIL  8 found, threshold 5
+    """
+    check_id = finding["id"]
+    name     = finding["name"]
+    status   = finding["status"]
+    details  = finding.get("details", "")
+
+    # Take the first sentence (up to ". ") as the brief metric — cap at 60 chars
+    first_sentence = details.split(". ")[0] if ". " in details else details
+    metric = first_sentence if len(first_sentence) <= 60 else first_sentence[:57] + "..."
+
+    left      = f"[{check_id}] {name} "
+    dots      = "." * max(3, _LOG_DOT_COLUMN - len(left))
+    color     = _TERM_COLORS.get(status, "")
+    reset     = _TERM_COLORS["RESET"]
+
+    print(f"  {left}{dots} {color}{status}{reset}  {metric}")
+
+
 # Scoring weights per severity
 _SEVERITY_WEIGHTS = {
     "critical": 15,
@@ -726,7 +762,7 @@ class OrgAnalyser:
         Returns:
             A finding dict ready to be included in the report.
         """
-        return {
+        finding = {
             "id":             check["id"],
             "category":       check["category"],
             "name":           check["name"],
@@ -737,3 +773,5 @@ class OrgAnalyser:
             "ai_analysis":    "",   # populated later by _get_ai_analysis
             "recommendation": "",  # populated later by _get_ai_analysis
         }
+        _log_check_result(finding)
+        return finding
