@@ -321,6 +321,24 @@ class OrgAnalyser:
                 details = "No permission sets found combining Modify All Data and Manage Users."
             findings.append(self._make_finding(check, status, details))
 
+        # SEC-007 — Guest User Profile Permissions
+        check = self._get_check("SEC-007")
+        if check:
+            guest        = org_data.get("guest_users", {})
+            guest_users  = guest.get("users", [])
+            if guest_users:
+                status  = "FAIL"
+                profiles = list({u["profile"] for u in guest_users})
+                details  = (
+                    f"{len(guest_users)} active Guest User(s) found "
+                    f"on profile(s): {', '.join(profiles[:10])}. "
+                    "Review permissions granted to guest profiles in Setup > Guest User."
+                )
+            else:
+                status  = "PASS"
+                details = "No active Guest User accounts found."
+            findings.append(self._make_finding(check, status, details))
+
         # SEC-012 — Inactive Users with Active Licenses
         check = self._get_check("SEC-012")
         if check:
@@ -494,6 +512,28 @@ class OrgAnalyser:
             )
             findings.append(self._make_finding(check, "INFO", details))
 
+        # DATA-006 — Duplicate Rules Configuration
+        check = self._get_check("DATA-006")
+        if check:
+            dup_rules    = org_data.get("duplicate_rules", {})
+            rules_by_obj = dup_rules.get("rules_by_object", {})
+            required     = check.get("required_objects", ["Account", "Contact", "Lead"])
+            missing      = [obj for obj in required if obj not in rules_by_obj]
+            if missing:
+                status  = "FAIL"
+                details = (
+                    f"{len(missing)} of {len(required)} required object(s) have no active "
+                    f"Duplicate Rule: {', '.join(missing)}. "
+                    f"Covered: {', '.join(obj for obj in required if obj in rules_by_obj) or 'none'}."
+                )
+            else:
+                status  = "PASS"
+                details = (
+                    f"All {len(required)} required object(s) have at least one active "
+                    f"Duplicate Rule ({', '.join(required)})."
+                )
+            findings.append(self._make_finding(check, status, details))
+
         return findings
 
     # ------------------------------------------------------------------
@@ -517,6 +557,33 @@ class OrgAnalyser:
                 "Verify overall coverage via Setup > Apex Test Execution (must be ≥ 75%)."
             )
             findings.append(self._make_finding(check, "INFO", details))
+
+        # GOV-003 — Overall Org Test Coverage
+        check = self._get_check("GOV-003")
+        if check:
+            org_coverage  = org_data.get("org_coverage", {})
+            pct_covered   = org_coverage.get("percent_covered")
+            threshold     = check.get("threshold", {}).get("min_coverage_percent", 75)
+            if pct_covered is None:
+                status  = "INFO"
+                details = (
+                    "Org-wide Apex test coverage could not be retrieved from the Tooling API. "
+                    "Verify coverage via Setup > Apex Test Execution (minimum required: 75%)."
+                )
+            elif pct_covered < threshold:
+                status  = "FAIL"
+                details = (
+                    f"Org-wide Apex test coverage is {pct_covered}%, "
+                    f"below the required minimum of {threshold}%. "
+                    "Salesforce blocks production deployments below this threshold."
+                )
+            else:
+                status  = "PASS"
+                details = (
+                    f"Org-wide Apex test coverage is {pct_covered}%, "
+                    f"meeting the required minimum of {threshold}%."
+                )
+            findings.append(self._make_finding(check, status, details))
 
         # GOV-004 — Storage Usage (Data and File)
         check = self._get_check("GOV-004")

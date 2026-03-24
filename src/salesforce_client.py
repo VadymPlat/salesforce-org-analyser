@@ -748,7 +748,101 @@ class SalesforceClient:
             return {}
 
     # ------------------------------------------------------------------
-    # 9. Apex Code Data
+    # 9. Org-Wide Apex Test Coverage
+    # ------------------------------------------------------------------
+
+    def get_org_wide_coverage(self) -> dict:
+        """
+        Query the org-wide Apex test coverage percentage via the Tooling API.
+
+        Uses ApexOrgWideCoverage which returns a single row with the
+        aggregate coverage across all Apex classes.
+
+        Returns:
+            - percent_covered: int (0–100), or None if unavailable
+        """
+        print("Collecting org-wide Apex test coverage ...")
+        result = self._soql_query(
+            "SELECT PercentCovered FROM ApexOrgWideCoverage",
+            tooling=True,
+        )
+        records = result.get("records", [])
+        if records:
+            pct = records[0].get("PercentCovered")
+            print(f"  Org-wide Apex coverage: {pct}%")
+            return {"percent_covered": pct}
+        print("  [WARNING] ApexOrgWideCoverage returned no records")
+        return {"percent_covered": None}
+
+    # ------------------------------------------------------------------
+    # 10. Guest Users
+    # ------------------------------------------------------------------
+
+    def get_guest_users(self) -> dict:
+        """
+        Query active Guest User accounts (Experience Cloud site users).
+
+        Guest users are a security concern if they hold broad permissions,
+        as they represent unauthenticated public access to the org.
+
+        Returns:
+            - users: list of {id, name, profile}
+            - count: int
+        """
+        print("Collecting guest user data ...")
+        users = self._get_all_records(
+            "SELECT Id, Name, Profile.Name "
+            "FROM User "
+            "WHERE UserType = 'Guest' "
+            "AND IsActive = true "
+            "ORDER BY Name"
+        )
+        result_users = [
+            {
+                "id":      u["Id"],
+                "name":    u["Name"],
+                "profile": u.get("Profile", {}).get("Name", "Unknown"),
+            }
+            for u in users
+        ]
+        print(f"  Active guest users: {len(result_users)}")
+        return {
+            "users": result_users,
+            "count": len(result_users),
+        }
+
+    # ------------------------------------------------------------------
+    # 11. Duplicate Rules
+    # ------------------------------------------------------------------
+
+    def get_duplicate_rules(self) -> dict:
+        """
+        Query active Duplicate Rules and group them by object type.
+
+        Returns:
+            - rules_by_object: dict of {SobjectType: count}
+            - total_active:    int
+        """
+        print("Collecting duplicate rules data ...")
+        rules = self._get_all_records(
+            "SELECT Id, SobjectType, IsActive "
+            "FROM DuplicateRule "
+            "WHERE IsActive = true "
+            "ORDER BY SobjectType"
+        )
+        rules_by_object: dict[str, int] = {}
+        for r in rules:
+            obj = r.get("SobjectType", "Unknown")
+            rules_by_object[obj] = rules_by_object.get(obj, 0) + 1
+
+        print(f"  Active duplicate rules: {len(rules)} across {len(rules_by_object)} object(s)")
+        return {
+            "rules_by_object": rules_by_object,
+            "total_active":    len(rules),
+        }
+
+    # ------------------------------------------------------------------
+    # 12. Apex Code Data
     # ------------------------------------------------------------------
 
     def get_apex_code_data(self) -> dict:

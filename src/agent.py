@@ -143,9 +143,20 @@ class OrgHealthAgent:
             inactive_users_data = users_no_role_data = {}
 
         if "Governance" in cats or "Integrations" in cats:
-            org_limits_data = self._client.get_org_limits()
+            org_limits_data  = self._client.get_org_limits()
+            org_coverage_data = self._client.get_org_wide_coverage()
         else:
-            org_limits_data = {}
+            org_limits_data = org_coverage_data = {}
+
+        if "Security" in cats:
+            guest_users_data = self._client.get_guest_users()
+        else:
+            guest_users_data = {}
+
+        if "Data Model" in cats:
+            duplicate_rules_data = self._client.get_duplicate_rules()
+        else:
+            duplicate_rules_data = {}
 
         org_data = {
             "security":          security_data,
@@ -157,6 +168,9 @@ class OrgHealthAgent:
             "inactive_users":    inactive_users_data,
             "users_without_role": users_no_role_data,
             "org_limits":        org_limits_data,
+            "org_coverage":      org_coverage_data,
+            "guest_users":       guest_users_data,
+            "duplicate_rules":   duplicate_rules_data,
         }
 
         # ── Step 4: AI analysis ───────────────────────────────────────
@@ -264,6 +278,19 @@ class OrgHealthAgent:
         org_limits_data = self._client.get_org_limits()
         _ok(f"Org limits retrieved ({len(org_limits_data)} limit types)")
 
+        _info("Collecting org-wide Apex test coverage ...")
+        org_coverage_data = self._client.get_org_wide_coverage()
+        pct = org_coverage_data.get("percent_covered")
+        _ok(f"Org-wide coverage: {pct}%" if pct is not None else "Org-wide coverage: unavailable")
+
+        _info("Collecting guest user data ...")
+        guest_users_data = self._client.get_guest_users()
+        _ok(f"Guest users: {guest_users_data.get('count', 0)}")
+
+        _info("Collecting duplicate rules ...")
+        duplicate_rules_data = self._client.get_duplicate_rules()
+        _ok(f"Active duplicate rules: {duplicate_rules_data.get('total_active', 0)}")
+
         # ── Step 4: Bundle collected data ────────────────────────────
         org_data = {
             "security":           security_data,
@@ -275,6 +302,9 @@ class OrgHealthAgent:
             "inactive_users":     inactive_users_data,
             "users_without_role": users_no_role_data,
             "org_limits":         org_limits_data,
+            "org_coverage":       org_coverage_data,
+            "guest_users":        guest_users_data,
+            "duplicate_rules":    duplicate_rules_data,
         }
 
         # ── Step 5: Run AI analysis ──────────────────────────────────
