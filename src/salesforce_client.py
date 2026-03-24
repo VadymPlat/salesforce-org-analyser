@@ -630,7 +630,124 @@ class SalesforceClient:
         }
 
     # ------------------------------------------------------------------
-    # 6. Apex Code Data
+    # 6. Inactive Users
+    # ------------------------------------------------------------------
+
+    def get_inactive_users(self, inactive_days: int = 90) -> dict:
+        """
+        Query active internal users who have not logged in within the threshold period.
+
+        Args:
+            inactive_days: Days of inactivity to flag (default: 90).
+
+        Returns:
+            - users:          list of {id, name, username, last_login}
+            - count:          int
+            - threshold_days: int
+        """
+        from datetime import datetime, timedelta, timezone
+
+        print(f"Collecting inactive users (no login in {inactive_days}+ days) ...")
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=inactive_days)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        users = self._get_all_records(
+            "SELECT Id, Name, Username, LastLoginDate "
+            "FROM User "
+            "WHERE IsActive = true "
+            "AND UserType = 'Standard' "
+            f"AND (LastLoginDate < {cutoff} OR LastLoginDate = null) "
+            "ORDER BY LastLoginDate ASC NULLS FIRST"
+        )
+
+        result_users = [
+            {
+                "id":         u["Id"],
+                "name":       u["Name"],
+                "username":   u["Username"],
+                "last_login": u.get("LastLoginDate"),
+            }
+            for u in users
+        ]
+
+        print(f"  Inactive users (>{inactive_days} days): {len(result_users)}")
+        return {
+            "users":          result_users,
+            "count":          len(result_users),
+            "threshold_days": inactive_days,
+        }
+
+    # ------------------------------------------------------------------
+    # 7. Users Without Role
+    # ------------------------------------------------------------------
+
+    def get_users_without_role(self) -> dict:
+        """
+        Query active internal users who have no Role assigned.
+
+        Users without a role do not participate in the Role Hierarchy for
+        record sharing, which can cause unintended data access gaps.
+
+        Returns:
+            - users: list of {id, name, username, profile}
+            - count: int
+        """
+        print("Collecting users without role assignment ...")
+
+        users = self._get_all_records(
+            "SELECT Id, Name, Username, Profile.Name "
+            "FROM User "
+            "WHERE IsActive = true "
+            "AND UserType = 'Standard' "
+            "AND UserRoleId = null "
+            "ORDER BY Name"
+        )
+
+        result_users = [
+            {
+                "id":       u["Id"],
+                "name":     u["Name"],
+                "username": u["Username"],
+                "profile":  u.get("Profile", {}).get("Name", "Unknown"),
+            }
+            for u in users
+        ]
+
+        print(f"  Users without role: {len(result_users)}")
+        return {
+            "users": result_users,
+            "count": len(result_users),
+        }
+
+    # ------------------------------------------------------------------
+    # 8. Org Limits
+    # ------------------------------------------------------------------
+
+    def get_org_limits(self) -> dict:
+        """
+        Retrieve current org limit usage from the Salesforce Limits API.
+
+        Calls /services/data/v59.0/limits/ which returns entries of the form:
+            {"DailyApiRequests": {"Max": 15000, "Remaining": 14000}, ...}
+
+        Returns:
+            The raw limits dict keyed by limit name, or {} on failure.
+        """
+        print("Collecting org limits data ...")
+        url = self._rest_url("limits/")
+        try:
+            response = self._session.get(url, headers=self._headers, timeout=30)
+            response.raise_for_status()
+            limits = response.json()
+            print(f"  Org limits retrieved ({len(limits)} limit types)")
+            return limits
+        except requests.exceptions.RequestException as e:
+            print(f"  [WARNING] Could not retrieve org limits: {e}")
+            return {}
+
+    # ------------------------------------------------------------------
+    # 9. Apex Code Data
     # ------------------------------------------------------------------
 
     def get_apex_code_data(self) -> dict:

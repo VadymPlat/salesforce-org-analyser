@@ -109,6 +109,8 @@ class OrgAnalyser:
         raw_findings.extend(self._evaluate_security(org_data))
         raw_findings.extend(self._evaluate_automations(org_data))
         raw_findings.extend(self._evaluate_data_model(org_data))
+        raw_findings.extend(self._evaluate_governance(org_data))
+        raw_findings.extend(self._evaluate_integrations(org_data))
 
         # Only FAIL findings contribute to the score
         failed = [f for f in raw_findings if f["status"] == "FAIL"]
@@ -280,6 +282,25 @@ class OrgAnalyser:
                 details = "No permission sets found combining Modify All Data and Manage Users."
             findings.append(self._make_finding(check, status, details))
 
+        # SEC-012 — Inactive Users with Active Licenses
+        check = self._get_check("SEC-012")
+        if check:
+            inactive      = org_data.get("inactive_users", {})
+            users         = inactive.get("users", [])
+            threshold     = check.get("threshold", {}).get("inactive_days", 90)
+            if users:
+                status = "FAIL"
+                names  = [f"{u['name']} ({u['username']})" for u in users[:10]]
+                details = (
+                    f"{len(users)} active user(s) have not logged in for {threshold}+ days: "
+                    f"{', '.join(names)}"
+                    + (" ..." if len(users) > 10 else ".")
+                )
+            else:
+                status  = "PASS"
+                details = f"No active users found with login inactivity exceeding {threshold} days."
+            findings.append(self._make_finding(check, status, details))
+
         return findings
 
     # ------------------------------------------------------------------
@@ -434,7 +455,20 @@ class OrgAnalyser:
             )
             findings.append(self._make_finding(check, "INFO", details))
 
-        # GOV-002 / GOV-003 — Apex Test Coverage (informational)
+        return findings
+
+    # ------------------------------------------------------------------
+    # Governance checks
+    # ------------------------------------------------------------------
+
+    def _evaluate_governance(self, org_data: dict) -> list[dict]:
+        """Run all enabled Governance checks and return raw findings."""
+        findings = []
+        apex              = org_data.get("apex", {})
+        users_no_role     = org_data.get("users_without_role", {})
+        org_limits        = org_data.get("org_limits", {})
+
+        # GOV-002 — Apex Test Coverage (informational)
         check = self._get_check("GOV-002")
         if check:
             total_classes = apex.get("total_classes", 0)
@@ -445,33 +479,52 @@ class OrgAnalyser:
             )
             findings.append(self._make_finding(check, "INFO", details))
 
-        # GOV-007 — Deprecated API Versions in Use
-        check = self._get_check("GOV-007")
+        # GOV-004 — Storage Usage (Data and File)
+        check = self._get_check("GOV-004")
         if check:
-            below_min  = apex.get("classes_below_min_api", [])
-            threshold  = check.get("threshold", {}).get("min_api_version", 50.0)
-            if below_min:
-                status  = "FAIL"
-                names   = [f"{c['name']} (v{c['api_version']})" for c in below_min[:10]]
+            warning_pct  = check.get("threshold", {}).get("warning_percent", 75)
+            critical_pct = check.get("threshold", {}).get("critical_percent", 90)
+            data_limit   = org_limits.get("DataStorageMB", {})
+            file_limit   = org_limits.get("FileStorageMB", {})
+
+            if data_limit and file_limit:
+                data_max       = data_limit.get("Max", 0)
+                data_remaining = data_limit.get("Remaining", 0)
+                file_max       = file_limit.get("Max", 0)
+                file_remaining = file_limit.get("Remaining", 0)
+
+                data_used_pct = round((data_max - data_remaining) / data_max * 100) if data_max else 0
+                file_used_pct = round((file_max - file_remaining) / file_max * 100) if file_max else 0
+                max_pct       = max(data_used_pct, file_used_pct)
+
+                if max_pct >= critical_pct:
+                    status = "FAIL"
+                elif max_pct >= warning_pct:
+                    status = "FAIL"
+                else:
+                    status = "PASS"
+
                 details = (
-                    f"{len(below_min)} Apex class(es) use an API version below {threshold}: "
-                    f"{', '.join(names)}"
-                    + (" ..." if len(below_min) > 10 else ".")
+                    f"Data storage: {data_used_pct}% used "
+                    f"({data_max - data_remaining} MB of {data_max} MB). "
+                    f"File storage: {file_used_pct}% used "
+                    f"({file_max - file_remaining} MB of {file_max} MB). "
+                    f"Thresholds: warning {warning_pct}%, critical {critical_pct}%."
                 )
             else:
-                status  = "PASS"
+                status  = "INFO"
                 details = (
-                    f"All Apex classes use API version {threshold} or higher."
+                    "Storage usage data unavailable from the Limits API. "
+                    "Review storage in Setup > Storage Usage."
                 )
             findings.append(self._make_finding(check, status, details))
 
-        # GOV-005 — Hardcoded IDs in Apex (using DATA pattern)
-        # Map to a governance-style finding
+        # GOV-005 — Hardcoded IDs in Apex (remapped from debug logs slot)
         check = self._get_check("GOV-005")
         if check:
             classes_with_ids  = apex.get("classes_with_hardcoded_ids", [])
             triggers_with_ids = apex.get("triggers_with_hardcoded_ids", [])
-            all_with_ids = classes_with_ids + triggers_with_ids
+            all_with_ids      = classes_with_ids + triggers_with_ids
             if all_with_ids:
                 status  = "FAIL"
                 details = (
@@ -483,14 +536,94 @@ class OrgAnalyser:
             else:
                 status  = "PASS"
                 details = "No hardcoded Salesforce IDs detected in Apex classes or triggers."
-            # Re-use GOV-005 slot with a remapped description
-            check = dict(check)  # copy to avoid mutating the config
+            # Copy to avoid mutating the config
+            check = dict(check)
             check["name"]        = "Hardcoded Salesforce IDs in Apex Code"
             check["severity"]    = "high"
             check["description"] = (
                 "Hardcoded Salesforce record IDs in Apex break when deployed between orgs "
                 "and are a maintenance liability."
             )
+            findings.append(self._make_finding(check, status, details))
+
+        # GOV-007 — Deprecated API Versions in Use
+        check = self._get_check("GOV-007")
+        if check:
+            below_min = apex.get("classes_below_min_api", [])
+            threshold = check.get("threshold", {}).get("min_api_version", 50.0)
+            if below_min:
+                status = "FAIL"
+                names  = [f"{c['name']} (v{c['api_version']})" for c in below_min[:10]]
+                details = (
+                    f"{len(below_min)} Apex class(es) use an API version below {threshold}: "
+                    f"{', '.join(names)}"
+                    + (" ..." if len(below_min) > 10 else ".")
+                )
+            else:
+                status  = "PASS"
+                details = f"All Apex classes use API version {threshold} or higher."
+            findings.append(self._make_finding(check, status, details))
+
+        # GOV-010 — Active Users Without Role Assignment
+        check = self._get_check("GOV-010")
+        if check:
+            users     = users_no_role.get("users", [])
+            threshold = check.get("threshold", {}).get("max_count", 0)
+            if users:
+                status = "FAIL"
+                names  = [f"{u['name']} ({u['username']})" for u in users[:10]]
+                details = (
+                    f"{len(users)} active user(s) have no Role assigned: "
+                    f"{', '.join(names)}"
+                    + (" ..." if len(users) > 10 else ".")
+                )
+            else:
+                status  = "PASS"
+                details = "All active internal users have a Role assigned."
+            findings.append(self._make_finding(check, status, details))
+
+        return findings
+
+    # ------------------------------------------------------------------
+    # Integrations checks
+    # ------------------------------------------------------------------
+
+    def _evaluate_integrations(self, org_data: dict) -> list[dict]:
+        """Run all enabled Integrations checks and return raw findings."""
+        findings   = []
+        org_limits = org_data.get("org_limits", {})
+
+        # INT-005 — REST API Daily Request Limit Usage
+        check = self._get_check("INT-005")
+        if check:
+            warning_pct  = check.get("threshold", {}).get("warning_percent", 70)
+            critical_pct = check.get("threshold", {}).get("critical_percent", 90)
+            api_limit    = org_limits.get("DailyApiRequests", {})
+
+            if api_limit:
+                max_requests       = api_limit.get("Max", 0)
+                remaining_requests = api_limit.get("Remaining", 0)
+                used_requests      = max_requests - remaining_requests
+                used_pct           = round(used_requests / max_requests * 100) if max_requests else 0
+
+                if used_pct >= critical_pct:
+                    status = "FAIL"
+                elif used_pct >= warning_pct:
+                    status = "FAIL"
+                else:
+                    status = "PASS"
+
+                details = (
+                    f"Daily API request usage: {used_pct}% "
+                    f"({used_requests:,} of {max_requests:,} requests used today). "
+                    f"Thresholds: warning {warning_pct}%, critical {critical_pct}%."
+                )
+            else:
+                status  = "INFO"
+                details = (
+                    "API request limit data unavailable from the Limits API. "
+                    "Review usage in Setup > Company Information."
+                )
             findings.append(self._make_finding(check, status, details))
 
         return findings
