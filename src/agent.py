@@ -135,17 +135,28 @@ class OrgHealthAgent:
         _cb(55, "🔄 Collecting data model data...")
         data_model_data = self._client.get_data_model_data() if "Data Model" in cats else {}
 
-        _cb(70, "🔄 Collecting integration data...")
-        # Integrations and Governance share the same data collectors for now
-        # (dedicated collectors will be added in v2).
+        _cb(70, "🔄 Collecting governance and integration data...")
+        if "Governance" in cats or "Security" in cats:
+            inactive_users_data   = self._client.get_inactive_users()
+            users_no_role_data    = self._client.get_users_without_role()
+        else:
+            inactive_users_data = users_no_role_data = {}
+
+        if "Governance" in cats or "Integrations" in cats:
+            org_limits_data = self._client.get_org_limits()
+        else:
+            org_limits_data = {}
 
         org_data = {
-            "security":    security_data,
-            "owd":         owd_data,
-            "permissions": perm_data,
-            "automation":  automation_data,
-            "data_model":  data_model_data,
-            "apex":        apex_data if "Automation" in cats else {},
+            "security":          security_data,
+            "owd":               owd_data,
+            "permissions":       perm_data,
+            "automation":        automation_data,
+            "data_model":        data_model_data,
+            "apex":              apex_data if "Automation" in cats else {},
+            "inactive_users":    inactive_users_data,
+            "users_without_role": users_no_role_data,
+            "org_limits":        org_limits_data,
         }
 
         # ── Step 4: AI analysis ───────────────────────────────────────
@@ -240,14 +251,30 @@ class OrgHealthAgent:
             f"({apex_data.get('total_classes', 0)} classes, "
             f"{apex_data.get('total_triggers', 0)} triggers)")
 
+        _info("Collecting inactive users ...")
+        inactive_users_data = self._client.get_inactive_users()
+        _ok(f"Inactive users: {inactive_users_data.get('count', 0)} "
+            f"(>{inactive_users_data.get('threshold_days', 90)} days since last login)")
+
+        _info("Collecting users without role ...")
+        users_no_role_data = self._client.get_users_without_role()
+        _ok(f"Users without role: {users_no_role_data.get('count', 0)}")
+
+        _info("Collecting org limits ...")
+        org_limits_data = self._client.get_org_limits()
+        _ok(f"Org limits retrieved ({len(org_limits_data)} limit types)")
+
         # ── Step 4: Bundle collected data ────────────────────────────
         org_data = {
-            "security":    security_data,
-            "owd":         owd_data,
-            "permissions": perm_data,
-            "automation":  automation_data,
-            "data_model":  data_model_data,
-            "apex":        apex_data,
+            "security":           security_data,
+            "owd":                owd_data,
+            "permissions":        perm_data,
+            "automation":         automation_data,
+            "data_model":         data_model_data,
+            "apex":               apex_data,
+            "inactive_users":     inactive_users_data,
+            "users_without_role": users_no_role_data,
+            "org_limits":         org_limits_data,
         }
 
         # ── Step 5: Run AI analysis ──────────────────────────────────
