@@ -175,6 +175,18 @@ class ReportGenerator:
             ),
         )
 
+        # Full findings list (PASS + FAIL + INFO) sorted by category then ID.
+        # Passed as a top-level template variable so the template accesses it
+        # as `all_checks`, not `report.all_checks`.
+        all_checks = sorted(
+            findings,
+            key=lambda f: (f.get("category", ""), f.get("id", "")),
+        )
+        print(f"  DEBUG: all_checks has {len(all_checks)} items "
+              f"(FAIL={sum(1 for f in all_checks if f.get('status')=='FAIL')}, "
+              f"PASS={sum(1 for f in all_checks if f.get('status')=='PASS')}, "
+              f"INFO={sum(1 for f in all_checks if f.get('status')=='INFO')})")
+
         return {
             "report": {
                 "org_name":     org_info.get("org_name", "Salesforce Org"),
@@ -192,10 +204,11 @@ class ReportGenerator:
                     "gauge_circumference": round(circumference, 2),
                 },
                 "fail_findings":   fail_findings,
-                "all_checks":      sorted(findings, key=lambda f: (f.get("category", ""), f.get("id", ""))),
                 "severity_groups": severity_groups,
                 "category_stats":  category_stats,
                 "severity_colors": _SEVERITY_COLORS,
                 "severity_order":  [s for s in _SEVERITY_ORDER if s in severity_groups],
-            }
+            },
+            # Top-level so the template references it as `all_checks`, not `report.all_checks`
+            "all_checks": all_checks,
         }
