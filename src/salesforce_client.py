@@ -179,9 +179,10 @@ class SalesforceClient:
 
         print(f"Connecting to Salesforce as {username} ...")
 
+        import html as _html
         soap_body = SOAP_LOGIN_BODY.format(
-            username=username,
-            password=password + token,
+            username=_html.escape(username),
+            password=_html.escape(password + token),
         )
 
         headers = {

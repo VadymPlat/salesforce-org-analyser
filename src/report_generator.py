@@ -88,7 +88,17 @@ class ReportGenerator:
         context = self._build_context(report_data, org_info, timestamp)
 
         template = self._env.get_template("report_template.html")
-        html     = template.render(**context)
+        try:
+            html = template.render(**context)
+        except Exception as e:
+            import traceback
+            print(f"TEMPLATE RENDER ERROR: {e}")
+            traceback.print_exc()
+            print(f"all_checks type:   {type(context.get('all_checks'))}")
+            print(f"all_checks length: {len(context.get('all_checks', []))}")
+            if context.get("all_checks"):
+                print(f"First item keys:   {list(context['all_checks'][0].keys())}")
+            raise
 
         filepath.write_text(html, encoding="utf-8")
         print(f"  Report saved → {filepath.resolve()}")
