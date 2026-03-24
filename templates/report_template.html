@@ -687,6 +687,12 @@
       border: 1px solid #e2e8f0;
     }
 
+    .log-details {
+      color: var(--text-muted);
+      font-size: .78rem;
+      max-width: 380px;
+    }
+
     /* ------------------------------------------------------------------ */
     /* Print styles                                                         */
     /* ------------------------------------------------------------------ */
@@ -935,19 +941,21 @@
             <th>Category</th>
             <th>Check Name</th>
             <th>Status</th>
+            <th>Details</th>
           </tr>
         </thead>
         <tbody>
-          {% for finding in report.all_findings %}
+          {% for finding in report.all_checks %}
           <tr>
-            <td><span class="log-id">{{ finding.id }}</span></td>
-            <td>{{ finding.category }}</td>
-            <td>{{ finding.name }}</td>
+            <td><span class="log-id">{{ finding.id | default('') }}</span></td>
+            <td>{{ finding.category | default('') }}</td>
+            <td>{{ finding.name | default('') }}</td>
             <td>
-              <span class="log-status log-status--{{ finding.status | lower }}">
-                {{ finding.status }}
+              <span class="log-status log-status--{{ (finding.status | default('info')) | lower }}">
+                {{ finding.status | default('INFO') }}
               </span>
             </td>
+            <td class="log-details">{{ finding.details | default('') | truncate(80) }}</td>
           </tr>
           {% endfor %}
         </tbody>

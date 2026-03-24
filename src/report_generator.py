@@ -192,7 +192,7 @@ class ReportGenerator:
                     "gauge_circumference": round(circumference, 2),
                 },
                 "fail_findings":   fail_findings,
-                "all_findings":    findings,
+                "all_checks":      sorted(findings, key=lambda f: (f.get("category", ""), f.get("id", ""))),
                 "severity_groups": severity_groups,
                 "category_stats":  category_stats,
                 "severity_colors": _SEVERITY_COLORS,
