@@ -602,6 +602,92 @@
     .text-info     { color: var(--info); }
 
     /* ------------------------------------------------------------------ */
+    /* Check Execution Log                                                 */
+    /* ------------------------------------------------------------------ */
+    .execution-log-section {
+      padding: 0 0 48px;
+    }
+
+    .execution-log-card {
+      background: var(--white);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+      overflow: hidden;
+    }
+
+    .log-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .83rem;
+    }
+
+    .log-table thead th {
+      background: var(--navy);
+      color: rgba(255,255,255,.85);
+      font-size: .7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      padding: 12px 16px;
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    .log-table tbody tr {
+      border-bottom: 1px solid var(--border);
+      transition: background .15s;
+    }
+
+    .log-table tbody tr:last-child { border-bottom: none; }
+    .log-table tbody tr:hover { background: #f7f9fc; }
+
+    .log-table td {
+      padding: 10px 16px;
+      color: var(--text);
+      vertical-align: middle;
+    }
+
+    .log-id {
+      font-size: .72rem;
+      font-weight: 700;
+      letter-spacing: .05em;
+      color: var(--text-muted);
+      background: #f0f4f8;
+      padding: 2px 8px;
+      border-radius: 4px;
+      white-space: nowrap;
+    }
+
+    .log-status {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 20px;
+      font-size: .7rem;
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .log-status--fail {
+      background: #fff5f5;
+      color: var(--critical);
+      border: 1px solid #fed7d7;
+    }
+
+    .log-status--pass {
+      background: #f0fff4;
+      color: var(--low);
+      border: 1px solid #c6f6d5;
+    }
+
+    .log-status--info {
+      background: #f7fafc;
+      color: var(--info);
+      border: 1px solid #e2e8f0;
+    }
+
+    /* ------------------------------------------------------------------ */
     /* Print styles                                                         */
     /* ------------------------------------------------------------------ */
     @media print {
@@ -832,6 +918,41 @@
     {% endfor %}
 
     {% endif %}
+  </div>
+</section>
+
+<!-- ================================================================== -->
+<!-- CHECK EXECUTION LOG                                                  -->
+<!-- ================================================================== -->
+<section class="execution-log-section">
+  <div class="container">
+    <div class="section-title">Check Execution Log</div>
+    <div class="execution-log-card">
+      <table class="log-table">
+        <thead>
+          <tr>
+            <th>Check ID</th>
+            <th>Category</th>
+            <th>Check Name</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for finding in report.all_findings %}
+          <tr>
+            <td><span class="log-id">{{ finding.id }}</span></td>
+            <td>{{ finding.category }}</td>
+            <td>{{ finding.name }}</td>
+            <td>
+              <span class="log-status log-status--{{ finding.status | lower }}">
+                {{ finding.status }}
+              </span>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
   </div>
 </section>
 
