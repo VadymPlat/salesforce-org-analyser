@@ -151,7 +151,10 @@ class OrgAnalyser:
         # Only FAIL findings contribute to the score
         failed = [f for f in raw_findings if f["status"] == "FAIL"]
 
-        print(f"  Checks completed: {len(raw_findings)} | Failed: {len(failed)}")
+        pass_count = sum(1 for f in raw_findings if f["status"] == "PASS")
+        info_count = sum(1 for f in raw_findings if f["status"] == "INFO")
+        print(f"  Checks completed: {len(raw_findings)} "
+              f"(FAIL={len(failed)}, PASS={pass_count}, INFO={info_count})")
         print("Enriching findings with AI analysis ...")
 
         enriched_findings = []

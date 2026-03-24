@@ -945,7 +945,7 @@
           </tr>
         </thead>
         <tbody>
-          {% for finding in report.all_checks %}
+          {% for finding in all_checks %}
           <tr>
             <td><span class="log-id">{{ finding.id | default('') }}</span></td>
             <td>{{ finding.category | default('') }}</td>
