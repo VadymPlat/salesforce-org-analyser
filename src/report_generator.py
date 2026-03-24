@@ -192,6 +192,7 @@ class ReportGenerator:
                     "gauge_circumference": round(circumference, 2),
                 },
                 "fail_findings":   fail_findings,
+                "all_findings":    findings,
                 "severity_groups": severity_groups,
                 "category_stats":  category_stats,
                 "severity_colors": _SEVERITY_COLORS,
