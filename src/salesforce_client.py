@@ -740,7 +740,18 @@ class SalesforceClient:
         try:
             response = self._session.get(url, headers=self._headers, timeout=30)
             response.raise_for_status()
-            limits = response.json()
+            raw_limits = response.json()
+            # Salesforce always returns integers here, but cast defensively
+            # so downstream arithmetic never crashes on unexpected strings.
+            limits = {}
+            for key, val in raw_limits.items():
+                if isinstance(val, dict):
+                    limits[key] = {
+                        "Max":       int(val.get("Max", 0)),
+                        "Remaining": int(val.get("Remaining", 0)),
+                    }
+                else:
+                    limits[key] = val
             print(f"  Org limits retrieved ({len(limits)} limit types)")
             return limits
         except requests.exceptions.RequestException as e:
@@ -768,7 +779,11 @@ class SalesforceClient:
         )
         records = result.get("records", [])
         if records:
-            pct = records[0].get("PercentCovered")
+            raw = records[0].get("PercentCovered")
+            try:
+                pct = int(raw) if raw is not None else None
+            except (TypeError, ValueError):
+                pct = None
             print(f"  Org-wide Apex coverage: {pct}%")
             return {"percent_covered": pct}
         print("  [WARNING] ApexOrgWideCoverage returned no records")
@@ -1221,7 +1236,11 @@ class SalesforceClient:
         )
         records = result.get("records", [])
         if records and "error" not in result:
-            score = records[0].get("Score")
+            raw = records[0].get("Score")
+            try:
+                score = int(raw) if raw is not None else None
+            except (TypeError, ValueError):
+                score = None
             print(f"  Security Health Check score: {score}")
             return {"score": score}
         print("  [INFO] SecurityHealthCheck not available on this edition")
