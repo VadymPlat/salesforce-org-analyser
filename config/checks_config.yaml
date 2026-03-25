@@ -49,12 +49,10 @@ checks:
     severity: high
     enabled: true
     description: >
-      Checks that the org password policy meets minimum security standards:
-      minimum length, complexity requirements, and expiry period.
+      Reports the Salesforce Security Health Check score via the Tooling API.
+      A low score indicates password, session, or network policy weaknesses.
     threshold:
-      min_length: 12
-      max_expiry_days: 90
-      require_complexity: true
+      min_score: 70
 
   - id: SEC-005
     category: Security
@@ -100,6 +98,8 @@ checks:
     description: >
       Verifies that fields commonly holding sensitive data (SSN, salary,
       credit card, bank account) have restrictive FLS across profiles.
+    threshold:
+      max_reader_count: 3
     sensitive_field_patterns:
       - SSN
       - Social_Security
