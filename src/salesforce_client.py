@@ -1008,7 +1008,227 @@ class SalesforceClient:
         return {"sites": result_sites, "count": len(result_sites)}
 
     # ------------------------------------------------------------------
-    # 17. Apex Code Data
+    # 17. Named Credentials
+    # ------------------------------------------------------------------
+
+    def get_named_credentials(self) -> dict:
+        """
+        Query Named Credentials defined in the org via the Tooling API.
+
+        Used for SEC-008. Named Credentials are the recommended pattern
+        for managing external callout endpoints and credentials securely.
+
+        Returns:
+            - credentials: list of {id, name, endpoint}
+            - count:       int
+        """
+        print("Collecting Named Credentials ...")
+        creds = self._get_all_records(
+            "SELECT Id, DeveloperName, Endpoint FROM NamedCredential",
+            tooling=True,
+        )
+        result = [
+            {
+                "id":       c["Id"],
+                "name":     c.get("DeveloperName", ""),
+                "endpoint": c.get("Endpoint", ""),
+            }
+            for c in creds
+        ]
+        print(f"  Named credentials: {len(result)}")
+        return {"credentials": result, "count": len(result)}
+
+    # ------------------------------------------------------------------
+    # 18. Sensitive Field Permissions
+    # ------------------------------------------------------------------
+
+    def get_sensitive_field_permissions(self) -> dict:
+        """
+        Query FieldPermissions for fields matching known sensitive patterns.
+
+        Used for SEC-009. Returns the set of sensitive fields and a mapping
+        of which profiles or permission sets grant read access to each.
+
+        Returns:
+            - fields_readable_by: dict of {field_api_name: [reader names]}
+            - sensitive_field_count: int
+        """
+        print("Collecting sensitive field permissions ...")
+        records = self._get_all_records(
+            "SELECT Field, SobjectType, PermissionsRead, PermissionsEdit, "
+            "Parent.Profile.Name "
+            "FROM FieldPermissions "
+            "WHERE (Field LIKE '%SSN%' OR Field LIKE '%Social_Security%' "
+            "OR Field LIKE '%Salary%' OR Field LIKE '%Credit_Card%' "
+            "OR Field LIKE '%Bank_Account%' OR Field LIKE '%Tax_ID%') "
+            "AND PermissionsRead = true"
+        )
+        fields_readable_by: dict[str, list[str]] = {}
+        for r in records:
+            field  = r.get("Field", "")
+            parent = r.get("Parent", {}) or {}
+            profile = (parent.get("Profile") or {}).get("Name")
+            reader  = profile or "(custom permission set)"
+            fields_readable_by.setdefault(field, []).append(reader)
+
+        print(f"  Sensitive fields with read access: {len(fields_readable_by)}")
+        return {
+            "fields_readable_by":    fields_readable_by,
+            "sensitive_field_count": len(fields_readable_by),
+        }
+
+    # ------------------------------------------------------------------
+    # 19. Master-Detail Relationship Fields
+    # ------------------------------------------------------------------
+
+    def get_master_detail_fields(self) -> dict:
+        """
+        Query MasterDetail fields across the org via the Tooling API.
+
+        Used for DATA-005. Groups results by object so the analyser can
+        flag objects that have 2 master-detail relationships (the SF max).
+
+        Returns:
+            - fields_by_object: dict of {QualifiedApiName: [field_names]}
+            - total:            int
+        """
+        print("Collecting Master-Detail relationship fields ...")
+        fields = self._get_all_records(
+            "SELECT EntityDefinition.QualifiedApiName, QualifiedApiName, "
+            "DataType, RelationshipName "
+            "FROM FieldDefinition "
+            "WHERE DataType = 'MasterDetail'",
+            tooling=True,
+        )
+        fields_by_object: dict[str, list[str]] = {}
+        for f in fields:
+            obj = f.get("EntityDefinition", {}).get("QualifiedApiName", "")
+            fields_by_object.setdefault(obj, []).append(
+                f.get("QualifiedApiName", "")
+            )
+        print(f"  MasterDetail fields: {len(fields)} across "
+              f"{len(fields_by_object)} object(s)")
+        return {"fields_by_object": fields_by_object, "total": len(fields)}
+
+    # ------------------------------------------------------------------
+    # 20. External ID Fields
+    # ------------------------------------------------------------------
+
+    def get_external_id_fields(self) -> dict:
+        """
+        Query custom objects that have at least one External ID field.
+
+        Used for DATA-007. External ID fields are required for upsert
+        operations during data migrations and integrations.
+
+        Returns:
+            - objects_with_external_id: list of object API names
+            - count:                    int
+        """
+        print("Collecting External ID fields on custom objects ...")
+        fields = self._get_all_records(
+            "SELECT EntityDefinition.QualifiedApiName, QualifiedApiName, IsIdLookup "
+            "FROM FieldDefinition "
+            "WHERE EntityDefinition.QualifiedApiName LIKE '%__c' "
+            "AND IsIdLookup = true",
+            tooling=True,
+        )
+        objects_with_ext_id = list({
+            f.get("EntityDefinition", {}).get("QualifiedApiName", "")
+            for f in fields
+        })
+        print(f"  Custom objects with External ID field: {len(objects_with_ext_id)}")
+        return {
+            "objects_with_external_id": objects_with_ext_id,
+            "count":                    len(objects_with_ext_id),
+        }
+
+    # ------------------------------------------------------------------
+    # 21. Validation Rules
+    # ------------------------------------------------------------------
+
+    def get_validation_rules(self) -> dict:
+        """
+        Query all active Validation Rules via the Tooling API.
+
+        Used for DATA-009. Rules with very short error messages provide
+        poor UX to end users who trigger them.
+
+        Returns:
+            - rules: list of {id, object, error_message}
+            - count: int
+        """
+        print("Collecting active Validation Rules ...")
+        rules = self._get_all_records(
+            "SELECT Id, EntityDefinition.QualifiedApiName, ErrorMessage, Active "
+            "FROM ValidationRule "
+            "WHERE Active = true",
+            tooling=True,
+        )
+        result = [
+            {
+                "id":            r["Id"],
+                "object":        r.get("EntityDefinition", {}).get("QualifiedApiName", ""),
+                "error_message": r.get("ErrorMessage", ""),
+            }
+            for r in rules
+        ]
+        print(f"  Active validation rules: {len(result)}")
+        return {"rules": result, "count": len(result)}
+
+    # ------------------------------------------------------------------
+    # 22. Custom Labels
+    # ------------------------------------------------------------------
+
+    def get_custom_labels(self) -> dict:
+        """
+        Count all Custom Labels in the org.
+
+        Used for GOV-006. A very high label count signals label sprawl
+        and the need for governance.
+
+        Returns:
+            - count: int
+        """
+        print("Collecting Custom Labels count ...")
+        result = self._soql_query("SELECT COUNT() FROM CustomLabel")
+        if "error" in result:
+            print("  [WARNING] CustomLabel query failed — defaulting to 0")
+            return {"count": 0}
+        count = result.get("totalSize", 0)
+        print(f"  Custom labels: {count}")
+        return {"count": count}
+
+    # ------------------------------------------------------------------
+    # 23. Security Health Check Score
+    # ------------------------------------------------------------------
+
+    def get_security_health_check(self) -> dict:
+        """
+        Query the Salesforce Security Health Check score via Tooling API.
+
+        Returns the native SF security score (0-100) if queryable.
+        Not all editions support SecurityHealthCheck — returns None on
+        failure so the analyser surfaces it as INFO.
+
+        Returns:
+            - score: int (0-100) or None if unavailable
+        """
+        print("Collecting Security Health Check score ...")
+        result = self._soql_query(
+            "SELECT Id, Score FROM SecurityHealthCheck",
+            tooling=True,
+        )
+        records = result.get("records", [])
+        if records and "error" not in result:
+            score = records[0].get("Score")
+            print(f"  Security Health Check score: {score}")
+            return {"score": score}
+        print("  [INFO] SecurityHealthCheck not available on this edition")
+        return {"score": None}
+
+    # ------------------------------------------------------------------
+    # 24. Apex Code Data
     # ------------------------------------------------------------------
 
     def get_apex_code_data(self) -> dict:

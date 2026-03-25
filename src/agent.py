@@ -119,11 +119,15 @@ class OrgHealthAgent:
         # ── Step 3: Collect data per selected category ────────────────
         _cb(25, "🔄 Collecting security data...")
         if "Security" in cats:
-            security_data = self._client.get_user_security_data()
-            owd_data      = self._client.get_owd_settings()
-            perm_data     = self._client.get_permission_sets_data()
+            security_data             = self._client.get_user_security_data()
+            owd_data                  = self._client.get_owd_settings()
+            perm_data                 = self._client.get_permission_sets_data()
+            named_creds_data          = self._client.get_named_credentials()
+            sensitive_fls_data        = self._client.get_sensitive_field_permissions()
+            security_health_data      = self._client.get_security_health_check()
         else:
             security_data = owd_data = perm_data = {}
+            named_creds_data = sensitive_fls_data = security_health_data = {}
 
         _cb(40, "🔄 Collecting automation data...")
         if "Automation" in cats:
@@ -139,8 +143,12 @@ class OrgHealthAgent:
             data_model_data           = self._client.get_data_model_data()
             duplicate_rules_data      = self._client.get_duplicate_rules()
             multiselect_fields_data   = self._client.get_multiselect_picklist_fields()
+            master_detail_data        = self._client.get_master_detail_fields()
+            external_id_data          = self._client.get_external_id_fields()
+            validation_rules_data     = self._client.get_validation_rules()
         else:
             data_model_data = duplicate_rules_data = multiselect_fields_data = {}
+            master_detail_data = external_id_data = validation_rules_data = {}
 
         _cb(70, "🔄 Collecting governance and integration data...")
         if "Governance" in cats or "Security" in cats:
@@ -155,9 +163,14 @@ class OrgHealthAgent:
         else:
             org_limits_data = org_coverage_data = {}
 
+        if "Governance" in cats:
+            custom_labels_data = self._client.get_custom_labels()
+        else:
+            custom_labels_data = {}
+
         if "Integrations" in cats:
-            connected_apps_data    = self._client.get_connected_apps()
-            remote_sites_data      = self._client.get_remote_site_settings()
+            connected_apps_data = self._client.get_connected_apps()
+            remote_sites_data   = self._client.get_remote_site_settings()
         else:
             connected_apps_data = remote_sites_data = {}
 
@@ -167,23 +180,30 @@ class OrgHealthAgent:
             guest_users_data = {}
 
         org_data = {
-            "security":                 security_data,
-            "owd":                      owd_data,
-            "permissions":              perm_data,
-            "automation":               automation_data,
-            "data_model":               data_model_data,
-            "apex":                     apex_data if "Automation" in cats else {},
-            "inactive_users":           inactive_users_data,
-            "users_without_role":       users_no_role_data,
-            "org_limits":               org_limits_data,
-            "org_coverage":             org_coverage_data,
-            "guest_users":              guest_users_data,
-            "duplicate_rules":          duplicate_rules_data,
-            "record_triggered_flows":   record_triggered_data,
-            "scheduled_jobs":           scheduled_jobs_data,
+            "security":                   security_data,
+            "owd":                        owd_data,
+            "permissions":                perm_data,
+            "automation":                 automation_data,
+            "data_model":                 data_model_data,
+            "apex":                       apex_data if "Automation" in cats else {},
+            "inactive_users":             inactive_users_data,
+            "users_without_role":         users_no_role_data,
+            "org_limits":                 org_limits_data,
+            "org_coverage":               org_coverage_data,
+            "guest_users":                guest_users_data,
+            "duplicate_rules":            duplicate_rules_data,
+            "record_triggered_flows":     record_triggered_data,
+            "scheduled_jobs":             scheduled_jobs_data,
             "multiselect_picklist_fields": multiselect_fields_data,
-            "connected_apps":           connected_apps_data,
-            "remote_site_settings":     remote_sites_data,
+            "connected_apps":             connected_apps_data,
+            "remote_site_settings":       remote_sites_data,
+            "named_credentials":          named_creds_data,
+            "sensitive_field_permissions": sensitive_fls_data,
+            "security_health_check":      security_health_data,
+            "master_detail_fields":       master_detail_data,
+            "external_id_fields":         external_id_data,
+            "validation_rules":           validation_rules_data,
+            "custom_labels":              custom_labels_data,
         }
 
         # ── Step 4: AI analysis ───────────────────────────────────────
@@ -324,6 +344,37 @@ class OrgHealthAgent:
         remote_sites_data = self._client.get_remote_site_settings()
         _ok(f"Active remote site settings: {remote_sites_data.get('count', 0)}")
 
+        _info("Collecting Named Credentials ...")
+        named_creds_data = self._client.get_named_credentials()
+        _ok(f"Named credentials: {named_creds_data.get('count', 0)}")
+
+        _info("Collecting sensitive field permissions ...")
+        sensitive_fls_data = self._client.get_sensitive_field_permissions()
+        _ok(f"Sensitive fields with read access: "
+            f"{sensitive_fls_data.get('sensitive_field_count', 0)}")
+
+        _info("Collecting Security Health Check score ...")
+        security_health_data = self._client.get_security_health_check()
+        score = security_health_data.get("score")
+        _ok(f"Security Health Check score: {score}" if score is not None
+            else "Security Health Check: not available on this edition")
+
+        _info("Collecting Master-Detail relationship fields ...")
+        master_detail_data = self._client.get_master_detail_fields()
+        _ok(f"Master-Detail fields: {master_detail_data.get('total', 0)}")
+
+        _info("Collecting External ID fields ...")
+        external_id_data = self._client.get_external_id_fields()
+        _ok(f"Custom objects with External ID: {external_id_data.get('count', 0)}")
+
+        _info("Collecting active Validation Rules ...")
+        validation_rules_data = self._client.get_validation_rules()
+        _ok(f"Active validation rules: {validation_rules_data.get('count', 0)}")
+
+        _info("Collecting Custom Labels count ...")
+        custom_labels_data = self._client.get_custom_labels()
+        _ok(f"Custom labels: {custom_labels_data.get('count', 0)}")
+
         # ── Step 4: Bundle collected data ────────────────────────────
         org_data = {
             "security":                   security_data,
@@ -343,6 +394,13 @@ class OrgHealthAgent:
             "multiselect_picklist_fields": multiselect_fields_data,
             "connected_apps":             connected_apps_data,
             "remote_site_settings":       remote_sites_data,
+            "named_credentials":          named_creds_data,
+            "sensitive_field_permissions": sensitive_fls_data,
+            "security_health_check":      security_health_data,
+            "master_detail_fields":       master_detail_data,
+            "external_id_fields":         external_id_data,
+            "validation_rules":           validation_rules_data,
+            "custom_labels":              custom_labels_data,
         }
 
         # ── Step 5: Run AI analysis ──────────────────────────────────

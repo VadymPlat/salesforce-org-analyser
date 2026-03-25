@@ -321,6 +321,35 @@ class OrgAnalyser:
                 details = "No permission sets found combining Modify All Data and Manage Users."
             findings.append(self._make_finding(check, status, details))
 
+        # SEC-004 — Password Policy Strength (Security Health Check score)
+        check = self._get_check("SEC-004")
+        if check:
+            health_check = org_data.get("security_health_check", {})
+            score        = health_check.get("score")
+            if score is not None:
+                threshold = check.get("threshold", {}).get("min_score", 70)
+                if score < threshold:
+                    status  = "FAIL"
+                    details = (
+                        f"Salesforce Security Health Check score is {score}/100 "
+                        f"(threshold: {threshold}). "
+                        "Review and remediate items in Setup > Security > Health Check."
+                    )
+                else:
+                    status  = "PASS"
+                    details = (
+                        f"Salesforce Security Health Check score is {score}/100 "
+                        f"(meets threshold of {threshold})."
+                    )
+            else:
+                status  = "INFO"
+                details = (
+                    "Security Health Check score could not be retrieved via the Tooling API "
+                    "on this org edition. "
+                    "Review manually in Setup > Security > Health Check."
+                )
+            findings.append(self._make_finding(check, status, details))
+
         # SEC-007 — Guest User Profile Permissions
         check = self._get_check("SEC-007")
         if check:
@@ -356,6 +385,64 @@ class OrgAnalyser:
             else:
                 status  = "PASS"
                 details = f"No active users found with login inactivity exceeding {threshold} days."
+            findings.append(self._make_finding(check, status, details))
+
+        # SEC-008 — Named Credentials for External Callouts
+        check = self._get_check("SEC-008")
+        if check:
+            nc       = org_data.get("named_credentials", {})
+            creds    = nc.get("credentials", [])
+            if creds:
+                names   = [c["name"] for c in creds[:10]]
+                status  = "PASS"
+                details = (
+                    f"{len(creds)} Named Credential(s) found: {', '.join(names)}"
+                    + (" ..." if len(creds) > 10 else ".")
+                    + " The org is using Named Credentials for callout management."
+                )
+            else:
+                status  = "INFO"
+                details = (
+                    "No Named Credentials found in this org. "
+                    "Adopt Named Credentials for all external callouts to avoid "
+                    "hardcoded endpoints and credentials in Apex or Custom Settings."
+                )
+            findings.append(self._make_finding(check, status, details))
+
+        # SEC-009 — Field-Level Security on Sensitive Fields
+        check = self._get_check("SEC-009")
+        if check:
+            fls            = org_data.get("sensitive_field_permissions", {})
+            readable_by    = fls.get("fields_readable_by", {})
+            threshold      = check.get("threshold", {}).get("max_reader_count", 3)
+            overexposed    = {
+                field: readers
+                for field, readers in readable_by.items()
+                if len(readers) > threshold
+            }
+            if overexposed:
+                status  = "FAIL"
+                examples = [
+                    f"{field} ({len(readers)} readers)"
+                    for field, readers in list(overexposed.items())[:8]
+                ]
+                details = (
+                    f"{len(overexposed)} sensitive field(s) are readable by more than "
+                    f"{threshold} profile(s)/permission set(s): {', '.join(examples)}"
+                    + (" ..." if len(overexposed) > 8 else ".")
+                )
+            elif readable_by:
+                status  = "PASS"
+                details = (
+                    f"{len(readable_by)} sensitive field(s) found; all are restricted "
+                    f"to {threshold} or fewer profile(s)/permission set(s)."
+                )
+            else:
+                status  = "PASS"
+                details = (
+                    "No sensitive fields (SSN, Salary, Credit Card, etc.) detected, "
+                    "or all are properly restricted."
+                )
             findings.append(self._make_finding(check, status, details))
 
         return findings
@@ -594,6 +681,89 @@ class OrgAnalyser:
                 )
             findings.append(self._make_finding(check, status, details))
 
+        # DATA-005 — Objects With More Than 2 Master-Detail Relationships
+        check = self._get_check("DATA-005")
+        if check:
+            md        = org_data.get("master_detail_fields", {})
+            by_object = md.get("fields_by_object", {})
+            at_limit  = {
+                obj: fields
+                for obj, fields in by_object.items()
+                if len(fields) >= 2
+            }
+            if at_limit:
+                status  = "FAIL"
+                examples = [
+                    f"{obj} ({len(fields)} master-detail)"
+                    for obj, fields in list(at_limit.items())[:10]
+                ]
+                details = (
+                    f"{len(at_limit)} object(s) are at or approaching the "
+                    f"Salesforce maximum of 2 Master-Detail relationships: "
+                    f"{', '.join(examples)}."
+                )
+            else:
+                status  = "PASS"
+                details = (
+                    "No objects found with 2 or more Master-Detail relationships."
+                )
+            findings.append(self._make_finding(check, status, details))
+
+        # DATA-007 — Custom Objects Without External ID Fields
+        check = self._get_check("DATA-007")
+        if check:
+            ext_id       = org_data.get("external_id_fields", {})
+            with_ext_id  = set(ext_id.get("objects_with_external_id", []))
+            all_custom   = [
+                obj["name"]
+                for obj in data_model.get("custom_objects", [])
+            ]
+            missing      = [obj for obj in all_custom if obj not in with_ext_id]
+            if missing:
+                status  = "FAIL"
+                details = (
+                    f"{len(missing)} of {len(all_custom)} custom object(s) have no "
+                    f"External ID field: {', '.join(missing[:10])}"
+                    + (" ..." if len(missing) > 10 else ".")
+                )
+            else:
+                status  = "PASS"
+                details = (
+                    f"All {len(all_custom)} custom object(s) have at least one "
+                    "External ID field."
+                )
+            findings.append(self._make_finding(check, status, details))
+
+        # DATA-009 — Validation Rules Without Error Message Details
+        check = self._get_check("DATA-009")
+        if check:
+            vr_data   = org_data.get("validation_rules", {})
+            rules     = vr_data.get("rules", [])
+            threshold = check.get("threshold", {}).get("min_message_length", 20)
+            short_msg = [
+                r for r in rules
+                if len(r.get("error_message", "")) < threshold
+            ]
+            if short_msg:
+                status  = "FAIL"
+                examples = [
+                    f"{r['object']}: \"{r['error_message'][:40]}\""
+                    for r in short_msg[:8]
+                ]
+                details = (
+                    f"{len(short_msg)} of {len(rules)} active Validation Rule(s) "
+                    f"have error messages shorter than {threshold} characters: "
+                    f"{', '.join(examples)}"
+                    + (" ..." if len(short_msg) > 8 else ".")
+                )
+            else:
+                status  = "PASS"
+                details = (
+                    f"All {len(rules)} active Validation Rule(s) have error messages "
+                    f"of at least {threshold} characters."
+                )
+            findings.append(self._make_finding(check, status, details))
+
         return findings
 
     # ------------------------------------------------------------------
@@ -746,6 +916,25 @@ class OrgAnalyser:
             else:
                 status  = "PASS"
                 details = "All active internal users have a Role assigned."
+            findings.append(self._make_finding(check, status, details))
+
+        # GOV-006 — Custom Labels Count
+        check = self._get_check("GOV-006")
+        if check:
+            labels    = org_data.get("custom_labels", {})
+            count     = labels.get("count", 0)
+            threshold = check.get("threshold", {}).get("warning_count", 5000)
+            if count > threshold:
+                status  = "FAIL"
+                details = (
+                    f"{count:,} Custom Label(s) found — exceeds the warning threshold "
+                    f"of {threshold:,}. Review and retire unused labels to reduce sprawl."
+                )
+            else:
+                status  = "PASS"
+                details = (
+                    f"{count:,} Custom Label(s) found — within the threshold of {threshold:,}."
+                )
             findings.append(self._make_finding(check, status, details))
 
         return findings
