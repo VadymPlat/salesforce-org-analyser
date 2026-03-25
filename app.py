@@ -22,7 +22,6 @@ import json
 import os
 import secrets
 import sys
-import webbrowser
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -42,7 +41,7 @@ st.set_page_config(
     page_title="SF Org Analyser",
     page_icon="🔍",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 # ---------------------------------------------------------------------------
@@ -403,22 +402,8 @@ with st.sidebar:
 # Header (always visible)
 # ---------------------------------------------------------------------------
 
-col_title, col_badge = st.columns([3, 2])
-with col_title:
-    st.markdown("# 🔍 SF Org Analyser")
-    st.caption("AI-powered Salesforce org health assessment")
-
-with col_badge:
-    if st.session_state.authenticated:
-        org_display = st.session_state.org_name
-        org_type    = st.session_state.org_type
-        st.markdown(
-            f'<div class="connected-badge">'
-            f'✅ Connected to: <strong>{org_display}</strong> ({org_type})'
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-
+st.markdown("# 🔍 SF Org Analyser")
+st.caption("AI-powered Salesforce org health assessment")
 st.divider()
 
 
@@ -510,13 +495,9 @@ def show_results() -> None:
     with actions_col:
         st.markdown("### Actions")
 
-        btn1, btn2, btn3 = st.columns(3)
+        btn1, btn2 = st.columns(2)
 
         with btn1:
-            if st.button("📂 Open Full Report", use_container_width=True):
-                webbrowser.open(f"file://{report_path}")
-
-        with btn2:
             if report_path and Path(report_path).exists():
                 with open(report_path, "rb") as fh:
                     report_bytes = fh.read()
@@ -525,10 +506,11 @@ def show_results() -> None:
                     data=report_bytes,
                     file_name=Path(report_path).name,
                     mime="text/html",
+                    type="primary",
                     use_container_width=True,
                 )
 
-        with btn3:
+        with btn2:
             if st.button("🔄 Analyse Another Org", use_container_width=True):
                 for key, default in _DEFAULTS.items():
                     st.session_state[key] = default
@@ -536,8 +518,8 @@ def show_results() -> None:
 
         st.markdown("")
         st.caption(
-            "Full interactive report with AI recommendations "
-            f"has been saved to your `reports/` folder."
+            "Download the full interactive report with AI recommendations. "
+            "The report is self-contained — open it in any browser, share via email or Slack."
         )
 
 
@@ -689,48 +671,16 @@ def show_landing_page() -> None:
 
     # Hero
     st.markdown(
-        '<div class="hero-title">Analyse your Salesforce org health in minutes</div>',
+        '<div class="hero-title">Salesforce Org Health Analyser</div>',
         unsafe_allow_html=True,
     )
     st.markdown(
-        '<div class="hero-sub">50+ automated checks powered by Claude AI. '
-        "No installation required.</div>",
+        '<div class="hero-sub">50+ automated checks powered by Claude AI.</div>',
         unsafe_allow_html=True,
     )
     st.markdown("")
 
-    # Feature cards
-    f1, f2, f3 = st.columns(3)
-    with f1:
-        st.markdown(
-            '<div class="feature-card">'
-            "<h4>🔒 Security Analysis</h4>"
-            "<p>Profiles, Permission Sets, OWD, Sharing Rules, "
-            "MFA enforcement, and admin count.</p>"
-            "</div>",
-            unsafe_allow_html=True,
-        )
-    with f2:
-        st.markdown(
-            '<div class="feature-card">'
-            "<h4>⚡ Automation Health</h4>"
-            "<p>Flows, Triggers, Apex class quality, "
-            "Order of Execution conflicts, and bulk-safety patterns.</p>"
-            "</div>",
-            unsafe_allow_html=True,
-        )
-    with f3:
-        st.markdown(
-            '<div class="feature-card">'
-            "<h4>📊 AI Recommendations</h4>"
-            "<p>Claude AI explains every finding and prioritises fixes "
-            "with actionable, org-specific recommendations.</p>"
-            "</div>",
-            unsafe_allow_html=True,
-        )
-
-    st.markdown("")
-    st.divider()
+    # Connect section — primary action first
     st.markdown("### Connect to Salesforce")
 
     # Org type selector
@@ -791,6 +741,37 @@ def show_landing_page() -> None:
         "</div>",
         unsafe_allow_html=True,
     )
+
+    # Feature cards — supporting info below the primary action
+    st.markdown("")
+    f1, f2, f3 = st.columns(3)
+    with f1:
+        st.markdown(
+            '<div class="feature-card">'
+            "<h4>🔒 Security Analysis</h4>"
+            "<p>Profiles, Permission Sets, OWD, Sharing Rules, "
+            "MFA enforcement, and admin count.</p>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+    with f2:
+        st.markdown(
+            '<div class="feature-card">'
+            "<h4>⚡ Automation Health</h4>"
+            "<p>Flows, Triggers, Apex class quality, "
+            "Order of Execution conflicts, and bulk-safety patterns.</p>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+    with f3:
+        st.markdown(
+            '<div class="feature-card">'
+            "<h4>📊 AI Recommendations</h4>"
+            "<p>Claude AI explains every finding and prioritises fixes "
+            "with actionable, org-specific recommendations.</p>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
 
 # ---------------------------------------------------------------------------
