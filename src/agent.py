@@ -127,13 +127,20 @@ class OrgHealthAgent:
 
         _cb(40, "🔄 Collecting automation data...")
         if "Automation" in cats:
-            automation_data = self._client.get_automation_data()
-            apex_data       = self._client.get_apex_code_data()
+            automation_data         = self._client.get_automation_data()
+            apex_data               = self._client.get_apex_code_data()
+            record_triggered_data   = self._client.get_record_triggered_flows()
+            scheduled_jobs_data     = self._client.get_scheduled_jobs()
         else:
-            automation_data = apex_data = {}
+            automation_data = apex_data = record_triggered_data = scheduled_jobs_data = {}
 
         _cb(55, "🔄 Collecting data model data...")
-        data_model_data = self._client.get_data_model_data() if "Data Model" in cats else {}
+        if "Data Model" in cats:
+            data_model_data           = self._client.get_data_model_data()
+            duplicate_rules_data      = self._client.get_duplicate_rules()
+            multiselect_fields_data   = self._client.get_multiselect_picklist_fields()
+        else:
+            data_model_data = duplicate_rules_data = multiselect_fields_data = {}
 
         _cb(70, "🔄 Collecting governance and integration data...")
         if "Governance" in cats or "Security" in cats:
@@ -143,34 +150,40 @@ class OrgHealthAgent:
             inactive_users_data = users_no_role_data = {}
 
         if "Governance" in cats or "Integrations" in cats:
-            org_limits_data  = self._client.get_org_limits()
+            org_limits_data   = self._client.get_org_limits()
             org_coverage_data = self._client.get_org_wide_coverage()
         else:
             org_limits_data = org_coverage_data = {}
+
+        if "Integrations" in cats:
+            connected_apps_data    = self._client.get_connected_apps()
+            remote_sites_data      = self._client.get_remote_site_settings()
+        else:
+            connected_apps_data = remote_sites_data = {}
 
         if "Security" in cats:
             guest_users_data = self._client.get_guest_users()
         else:
             guest_users_data = {}
 
-        if "Data Model" in cats:
-            duplicate_rules_data = self._client.get_duplicate_rules()
-        else:
-            duplicate_rules_data = {}
-
         org_data = {
-            "security":          security_data,
-            "owd":               owd_data,
-            "permissions":       perm_data,
-            "automation":        automation_data,
-            "data_model":        data_model_data,
-            "apex":              apex_data if "Automation" in cats else {},
-            "inactive_users":    inactive_users_data,
-            "users_without_role": users_no_role_data,
-            "org_limits":        org_limits_data,
-            "org_coverage":      org_coverage_data,
-            "guest_users":       guest_users_data,
-            "duplicate_rules":   duplicate_rules_data,
+            "security":                 security_data,
+            "owd":                      owd_data,
+            "permissions":              perm_data,
+            "automation":               automation_data,
+            "data_model":               data_model_data,
+            "apex":                     apex_data if "Automation" in cats else {},
+            "inactive_users":           inactive_users_data,
+            "users_without_role":       users_no_role_data,
+            "org_limits":               org_limits_data,
+            "org_coverage":             org_coverage_data,
+            "guest_users":              guest_users_data,
+            "duplicate_rules":          duplicate_rules_data,
+            "record_triggered_flows":   record_triggered_data,
+            "scheduled_jobs":           scheduled_jobs_data,
+            "multiselect_picklist_fields": multiselect_fields_data,
+            "connected_apps":           connected_apps_data,
+            "remote_site_settings":     remote_sites_data,
         }
 
         # ── Step 4: AI analysis ───────────────────────────────────────
@@ -291,20 +304,45 @@ class OrgHealthAgent:
         duplicate_rules_data = self._client.get_duplicate_rules()
         _ok(f"Active duplicate rules: {duplicate_rules_data.get('total_active', 0)}")
 
+        _info("Collecting record-triggered flows ...")
+        record_triggered_data = self._client.get_record_triggered_flows()
+        _ok(f"Record-triggered flows: {record_triggered_data.get('count', 0)}")
+
+        _info("Collecting scheduled Apex jobs ...")
+        scheduled_jobs_data = self._client.get_scheduled_jobs()
+        _ok(f"Scheduled jobs waiting: {scheduled_jobs_data.get('count', 0)}")
+
+        _info("Collecting Multi-Select Picklist fields ...")
+        multiselect_fields_data = self._client.get_multiselect_picklist_fields()
+        _ok(f"Multi-select picklist fields: {multiselect_fields_data.get('count', 0)}")
+
+        _info("Collecting Connected Apps ...")
+        connected_apps_data = self._client.get_connected_apps()
+        _ok(f"Connected apps: {connected_apps_data.get('count', 0)}")
+
+        _info("Collecting Remote Site Settings ...")
+        remote_sites_data = self._client.get_remote_site_settings()
+        _ok(f"Active remote site settings: {remote_sites_data.get('count', 0)}")
+
         # ── Step 4: Bundle collected data ────────────────────────────
         org_data = {
-            "security":           security_data,
-            "owd":                owd_data,
-            "permissions":        perm_data,
-            "automation":         automation_data,
-            "data_model":         data_model_data,
-            "apex":               apex_data,
-            "inactive_users":     inactive_users_data,
-            "users_without_role": users_no_role_data,
-            "org_limits":         org_limits_data,
-            "org_coverage":       org_coverage_data,
-            "guest_users":        guest_users_data,
-            "duplicate_rules":    duplicate_rules_data,
+            "security":                   security_data,
+            "owd":                        owd_data,
+            "permissions":                perm_data,
+            "automation":                 automation_data,
+            "data_model":                 data_model_data,
+            "apex":                       apex_data,
+            "inactive_users":             inactive_users_data,
+            "users_without_role":         users_no_role_data,
+            "org_limits":                 org_limits_data,
+            "org_coverage":               org_coverage_data,
+            "guest_users":                guest_users_data,
+            "duplicate_rules":            duplicate_rules_data,
+            "record_triggered_flows":     record_triggered_data,
+            "scheduled_jobs":             scheduled_jobs_data,
+            "multiselect_picklist_fields": multiselect_fields_data,
+            "connected_apps":             connected_apps_data,
+            "remote_site_settings":       remote_sites_data,
         }
 
         # ── Step 5: Run AI analysis ──────────────────────────────────
