@@ -75,6 +75,32 @@ def _log_check_result(finding: dict) -> None:
     print(f"  {left}{dots} {color}{status}{reset}  {metric}")
 
 
+def _safe_int(value: Any, default: int = 0) -> int:
+    """
+    Safely coerce a value from an API response to int.
+
+    Salesforce REST/Tooling API responses occasionally return numeric
+    fields as strings (e.g. "65" instead of 65). This helper prevents
+    '<' not supported between str and int errors at comparison sites.
+    """
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    """Safely coerce a value from an API response to float."""
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 # Scoring weights per severity
 _SEVERITY_WEIGHTS = {
     "critical": 15,
@@ -325,8 +351,9 @@ class OrgAnalyser:
         check = self._get_check("SEC-004")
         if check:
             health_check = org_data.get("security_health_check", {})
-            score        = health_check.get("score")
-            if score is not None:
+            raw_score    = health_check.get("score")
+            score        = _safe_int(raw_score, -1) if raw_score is not None else None
+            if score is not None and score >= 0:
                 threshold = check.get("threshold", {}).get("min_score", 70)
                 if score < threshold:
                     status  = "FAIL"
@@ -791,9 +818,10 @@ class OrgAnalyser:
         # GOV-003 — Overall Org Test Coverage
         check = self._get_check("GOV-003")
         if check:
-            org_coverage  = org_data.get("org_coverage", {})
-            pct_covered   = org_coverage.get("percent_covered")
-            threshold     = check.get("threshold", {}).get("min_coverage_percent", 75)
+            org_coverage = org_data.get("org_coverage", {})
+            raw_pct      = org_coverage.get("percent_covered")
+            pct_covered  = _safe_int(raw_pct) if raw_pct is not None else None
+            threshold    = check.get("threshold", {}).get("min_coverage_percent", 75)
             if pct_covered is None:
                 status  = "INFO"
                 details = (
@@ -824,10 +852,10 @@ class OrgAnalyser:
             file_limit   = org_limits.get("FileStorageMB", {})
 
             if data_limit and file_limit:
-                data_max       = data_limit.get("Max", 0)
-                data_remaining = data_limit.get("Remaining", 0)
-                file_max       = file_limit.get("Max", 0)
-                file_remaining = file_limit.get("Remaining", 0)
+                data_max       = _safe_int(data_limit.get("Max", 0))
+                data_remaining = _safe_int(data_limit.get("Remaining", 0))
+                file_max       = _safe_int(file_limit.get("Max", 0))
+                file_remaining = _safe_int(file_limit.get("Remaining", 0))
 
                 data_used_pct = round((data_max - data_remaining) / data_max * 100) if data_max else 0
                 file_used_pct = round((file_max - file_remaining) / file_max * 100) if file_max else 0
@@ -922,7 +950,7 @@ class OrgAnalyser:
         check = self._get_check("GOV-006")
         if check:
             labels    = org_data.get("custom_labels", {})
-            count     = labels.get("count", 0)
+            count     = _safe_int(labels.get("count", 0))
             threshold = check.get("threshold", {}).get("warning_count", 5000)
             if count > threshold:
                 status  = "FAIL"
@@ -971,8 +999,8 @@ class OrgAnalyser:
             api_limit    = org_limits.get("DailyApiRequests", {})
 
             if api_limit:
-                max_requests       = api_limit.get("Max", 0)
-                remaining_requests = api_limit.get("Remaining", 0)
+                max_requests       = _safe_int(api_limit.get("Max", 0))
+                remaining_requests = _safe_int(api_limit.get("Remaining", 0))
                 used_requests      = max_requests - remaining_requests
                 used_pct           = round(used_requests / max_requests * 100) if max_requests else 0
 
