@@ -411,6 +411,30 @@ class OrgAnalyser:
                 details = "All objects have at most one active Apex Trigger."
             findings.append(self._make_finding(check, status, details))
 
+        # AUTO-004 — Flows Without Error Handling
+        check = self._get_check("AUTO-004")
+        if check:
+            record_triggered = org_data.get("record_triggered_flows", {})
+            flows     = record_triggered.get("flows", [])
+            threshold = 5
+            if len(flows) > threshold:
+                status = "FAIL"
+                names  = [f["label"] for f in flows[:10]]
+                details = (
+                    f"{len(flows)} active record-triggered flow(s) found "
+                    f"(threshold: {threshold}). Verify each has a fault path configured: "
+                    f"{', '.join(names)}"
+                    + (" ..." if len(flows) > 10 else ".")
+                )
+            else:
+                status  = "PASS"
+                details = (
+                    f"{len(flows)} active record-triggered flow(s) found — "
+                    f"within threshold of {threshold}. "
+                    "Verify each has a fault path configured."
+                )
+            findings.append(self._make_finding(check, status, details))
+
         # AUTO-006 — Apex Triggers Without Test Coverage (informational — needs ApexCodeCoverage)
         check = self._get_check("AUTO-006")
         if check:
@@ -453,6 +477,20 @@ class OrgAnalyser:
                 f"The org has {total_flows} active Flow(s). "
                 "Flow descriptions cannot be retrieved via SOQL; "
                 "review via Setup > Flows to ensure all flows are documented."
+            )
+            findings.append(self._make_finding(check, "INFO", details))
+
+        # AUTO-010 — High-Volume Scheduled Jobs
+        check = self._get_check("AUTO-010")
+        if check:
+            scheduled = org_data.get("scheduled_jobs", {})
+            jobs      = scheduled.get("jobs", [])
+            names     = [j["name"] for j in jobs[:10]]
+            details = (
+                f"{len(jobs)} scheduled Apex job(s) currently waiting to execute: "
+                + (", ".join(names) if names else "none")
+                + (" ..." if len(jobs) > 10 else ".")
+                + " Review scheduling frequency and verify there are no conflicts or load spikes."
             )
             findings.append(self._make_finding(check, "INFO", details))
 
@@ -511,6 +549,28 @@ class OrgAnalyser:
                 "review record counts in Setup > Storage Usage."
             )
             findings.append(self._make_finding(check, "INFO", details))
+
+        # DATA-004 — Multi-Select Picklist Fields
+        check = self._get_check("DATA-004")
+        if check:
+            mspl      = org_data.get("multiselect_picklist_fields", {})
+            fields    = mspl.get("fields", [])
+            threshold = check.get("threshold", {}).get("max_count", 10)
+            if len(fields) > threshold:
+                status = "FAIL"
+                field_names = [f"{f['object']}.{f['field']}" for f in fields[:10]]
+                details = (
+                    f"{len(fields)} Multi-Select Picklist field(s) found "
+                    f"(threshold: {threshold}): {', '.join(field_names)}"
+                    + (" ..." if len(fields) > 10 else ".")
+                )
+            else:
+                status  = "PASS"
+                details = (
+                    f"{len(fields)} Multi-Select Picklist field(s) found — "
+                    f"within the threshold of {threshold}."
+                )
+            findings.append(self._make_finding(check, status, details))
 
         # DATA-006 — Duplicate Rules Configuration
         check = self._get_check("DATA-006")
@@ -699,6 +759,21 @@ class OrgAnalyser:
         findings   = []
         org_limits = org_data.get("org_limits", {})
 
+        # INT-001 — Connected Apps With Excessive OAuth Scopes
+        check = self._get_check("INT-001")
+        if check:
+            connected = org_data.get("connected_apps", {})
+            apps      = connected.get("apps", [])
+            names     = [a["name"] for a in apps[:10]]
+            details = (
+                f"{len(apps)} Connected App(s) found in this org: "
+                + (", ".join(names) if names else "none")
+                + (" ..." if len(apps) > 10 else ".")
+                + " Review OAuth scopes for each app in Setup > App Manager — "
+                "restrict to the minimum required scopes."
+            )
+            findings.append(self._make_finding(check, "INFO", details))
+
         # INT-005 — REST API Daily Request Limit Usage
         check = self._get_check("INT-005")
         if check:
@@ -729,6 +804,35 @@ class OrgAnalyser:
                 details = (
                     "API request limit data unavailable from the Limits API. "
                     "Review usage in Setup > Company Information."
+                )
+            findings.append(self._make_finding(check, status, details))
+
+        # INT-008 — Remote Site Settings With Wildcards
+        check = self._get_check("INT-008")
+        if check:
+            from urllib.parse import urlparse
+            remote_sites = org_data.get("remote_site_settings", {})
+            sites        = remote_sites.get("sites", [])
+            broad_sites  = []
+            for s in sites:
+                url    = s.get("endpoint_url", "")
+                parsed = urlparse(url)
+                path   = parsed.path.rstrip("/")
+                if "*" in url or path == "":
+                    broad_sites.append(s)
+            if broad_sites:
+                status = "FAIL"
+                names  = [f"{s['name']} ({s['endpoint_url']})" for s in broad_sites[:10]]
+                details = (
+                    f"{len(broad_sites)} of {len(sites)} active Remote Site Setting(s) "
+                    "have overly broad endpoints (top-level domain only or wildcard): "
+                    f"{', '.join(names)}."
+                )
+            else:
+                status  = "PASS"
+                details = (
+                    f"All {len(sites)} active Remote Site Setting(s) have "
+                    "specific endpoint URLs."
                 )
             findings.append(self._make_finding(check, status, details))
 

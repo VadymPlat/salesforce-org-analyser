@@ -842,7 +842,173 @@ class SalesforceClient:
         }
 
     # ------------------------------------------------------------------
-    # 12. Apex Code Data
+    # 12. Record-Triggered Flows
+    # ------------------------------------------------------------------
+
+    def get_record_triggered_flows(self) -> dict:
+        """
+        Query active record-triggered flows via the Tooling API.
+
+        Used for AUTO-004 (Flows Without Error Handling). Since fault
+        connector presence cannot be detected via SOQL, the count of
+        active record-triggered flows is returned as a proxy.
+
+        Returns:
+            - flows: list of {id, api_name, label, process_type}
+            - count: int
+        """
+        print("Collecting active record-triggered flows ...")
+        flows = self._get_all_records(
+            "SELECT Id, ApiName, Label, ProcessType FROM Flow "
+            "WHERE Status = 'Active' "
+            "AND ProcessType IN ('AutoLaunchedFlow', 'RecordAfterSave', 'RecordBeforeSave')",
+            tooling=True,
+        )
+        result_flows = [
+            {
+                "id":           f["Id"],
+                "api_name":     f.get("ApiName", ""),
+                "label":        f.get("Label", ""),
+                "process_type": f.get("ProcessType", ""),
+            }
+            for f in flows
+        ]
+        print(f"  Active record-triggered flows: {len(result_flows)}")
+        return {"flows": result_flows, "count": len(result_flows)}
+
+    # ------------------------------------------------------------------
+    # 13. Scheduled Jobs
+    # ------------------------------------------------------------------
+
+    def get_scheduled_jobs(self) -> dict:
+        """
+        Query Apex Scheduled Jobs currently in WAITING state.
+
+        Used for AUTO-010 (High-Volume Scheduled Jobs). Returns all jobs
+        waiting to fire so the analyser can report on scheduling load.
+
+        Returns:
+            - jobs: list of {id, name, next_fire_time, cron_expression}
+            - count: int
+        """
+        print("Collecting scheduled Apex jobs ...")
+        jobs = self._get_all_records(
+            "SELECT Id, CronJobDetail.Name, State, NextFireTime, CronExpression "
+            "FROM CronTrigger "
+            "WHERE State = 'WAITING'"
+        )
+        result_jobs = [
+            {
+                "id":              j["Id"],
+                "name":            j.get("CronJobDetail", {}).get("Name", "Unknown"),
+                "state":           j.get("State", ""),
+                "next_fire_time":  j.get("NextFireTime"),
+                "cron_expression": j.get("CronExpression", ""),
+            }
+            for j in jobs
+        ]
+        print(f"  Scheduled jobs waiting: {len(result_jobs)}")
+        return {"jobs": result_jobs, "count": len(result_jobs)}
+
+    # ------------------------------------------------------------------
+    # 14. Multi-Select Picklist Fields
+    # ------------------------------------------------------------------
+
+    def get_multiselect_picklist_fields(self) -> dict:
+        """
+        Query all Multi-Select Picklist fields across the org via Tooling API.
+
+        Used for DATA-004. Multi-select picklists are hard to report on
+        and filter; a high count signals data model quality issues.
+
+        Returns:
+            - fields: list of {object, field}
+            - count:  int
+        """
+        print("Collecting Multi-Select Picklist fields ...")
+        fields = self._get_all_records(
+            "SELECT EntityDefinition.QualifiedApiName, QualifiedApiName, DataType "
+            "FROM FieldDefinition "
+            "WHERE DataType = 'MultiselectPicklist'",
+            tooling=True,
+        )
+        result_fields = [
+            {
+                "object": f.get("EntityDefinition", {}).get("QualifiedApiName", ""),
+                "field":  f.get("QualifiedApiName", ""),
+            }
+            for f in fields
+        ]
+        print(f"  Multi-select picklist fields: {len(result_fields)}")
+        return {"fields": result_fields, "count": len(result_fields)}
+
+    # ------------------------------------------------------------------
+    # 15. Connected Apps
+    # ------------------------------------------------------------------
+
+    def get_connected_apps(self) -> dict:
+        """
+        Query Connected Apps defined in the org via the Tooling API.
+
+        Used for INT-001 (Connected Apps With Excessive OAuth Scopes).
+        Full scope details are not queryable via SOQL, so the check
+        surfaces all apps for manual review.
+
+        Returns:
+            - apps:  list of {id, name, admin_approved_only}
+            - count: int
+        """
+        print("Collecting Connected Apps ...")
+        apps = self._get_all_records(
+            "SELECT Id, Name, OptionsAllowAdminApprovedUsersOnly "
+            "FROM ConnectedApplication",
+            tooling=True,
+        )
+        result_apps = [
+            {
+                "id":                 a["Id"],
+                "name":               a.get("Name", ""),
+                "admin_approved_only": a.get("OptionsAllowAdminApprovedUsersOnly", False),
+            }
+            for a in apps
+        ]
+        print(f"  Connected apps: {len(result_apps)}")
+        return {"apps": result_apps, "count": len(result_apps)}
+
+    # ------------------------------------------------------------------
+    # 16. Remote Site Settings
+    # ------------------------------------------------------------------
+
+    def get_remote_site_settings(self) -> dict:
+        """
+        Query active Remote Site Settings (RemoteProxy).
+
+        Used for INT-008. Flags any endpoint that is overly broad
+        (top-level domain only, no path) or contains a wildcard.
+
+        Returns:
+            - sites: list of {id, name, endpoint_url}
+            - count: int
+        """
+        print("Collecting Remote Site Settings ...")
+        sites = self._get_all_records(
+            "SELECT Id, SiteName, EndpointUrl, IsActive "
+            "FROM RemoteProxy "
+            "WHERE IsActive = true"
+        )
+        result_sites = [
+            {
+                "id":           s["Id"],
+                "name":         s.get("SiteName", ""),
+                "endpoint_url": s.get("EndpointUrl", ""),
+            }
+            for s in sites
+        ]
+        print(f"  Active remote site settings: {len(result_sites)}")
+        return {"sites": result_sites, "count": len(result_sites)}
+
+    # ------------------------------------------------------------------
+    # 17. Apex Code Data
     # ------------------------------------------------------------------
 
     def get_apex_code_data(self) -> dict:
