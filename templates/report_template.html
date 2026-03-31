@@ -602,6 +602,27 @@
     .text-info     { color: var(--info); }
 
     /* ------------------------------------------------------------------ */
+    /* AI Token Usage Bar                                                  */
+    /* ------------------------------------------------------------------ */
+    .ai-token-bar {
+      background: #f7fafc;
+      border-top: 1px solid #e2e8f0;
+      border-bottom: 1px solid #e2e8f0;
+      padding: 10px 0;
+      margin-bottom: 32px;
+    }
+
+    .ai-token-text {
+      font-size: .78rem;
+      color: #718096;
+    }
+
+    .ai-token-text strong {
+      color: #4a5568;
+      font-weight: 600;
+    }
+
+    /* ------------------------------------------------------------------ */
     /* Check Execution Log                                                 */
     /* ------------------------------------------------------------------ */
     .execution-log-section {
@@ -926,6 +947,23 @@
     {% endif %}
   </div>
 </section>
+
+<!-- ================================================================== -->
+<!-- AI TOKEN USAGE BAR                                                   -->
+<!-- ================================================================== -->
+{% if report.summary.ai_tokens and report.summary.ai_tokens.total_tokens > 0 %}
+<div class="ai-token-bar">
+  <div class="container">
+    <span class="ai-token-text">
+      AI Analysis:
+      <strong>{{ "{:,}".format(report.summary.ai_tokens.input_tokens) }}</strong> input tokens
+      + <strong>{{ "{:,}".format(report.summary.ai_tokens.output_tokens) }}</strong> output tokens
+      &nbsp;&mdash;&nbsp;
+      Estimated cost: <strong>${{ "%.4f"|format(report.summary.ai_tokens.estimated_cost_usd) }}</strong>
+    </span>
+  </div>
+</div>
+{% endif %}
 
 <!-- ================================================================== -->
 <!-- CHECK EXECUTION LOG                                                  -->
