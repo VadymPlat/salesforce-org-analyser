@@ -125,6 +125,8 @@ class OrgAnalyser:
         self._client = anthropic.Anthropic(
             api_key=os.getenv("ANTHROPIC_API_KEY")
         )
+        self._total_input_tokens:  int = 0
+        self._total_output_tokens: int = 0
 
     # ------------------------------------------------------------------
     # Public API
@@ -202,6 +204,12 @@ class OrgAnalyser:
 
         health_score = self._calculate_health_score(severity_counts)
 
+        estimated_cost = round(
+            (self._total_input_tokens * 3 / 1_000_000)
+            + (self._total_output_tokens * 15 / 1_000_000),
+            4,
+        )
+
         return {
             "summary": {
                 "health_score":   health_score,
@@ -211,6 +219,12 @@ class OrgAnalyser:
                 "medium_count":   severity_counts["medium"],
                 "low_count":      severity_counts["low"],
                 "info_count":     severity_counts["info"],
+                "ai_tokens": {
+                    "input_tokens":       self._total_input_tokens,
+                    "output_tokens":      self._total_output_tokens,
+                    "total_tokens":       self._total_input_tokens + self._total_output_tokens,
+                    "estimated_cost_usd": estimated_cost,
+                },
             },
             "findings": enriched_findings,
         }
@@ -487,7 +501,7 @@ class OrgAnalyser:
         # AUTO-001 — Active Process Builders (Legacy)
         check = self._get_check("AUTO-001")
         if check:
-            pb_count  = automation.get("legacy_process_builders", 0)
+            pb_count  = _safe_int(automation.get("legacy_process_builders", 0))
             threshold = check.get("threshold", {}).get("max_count", 0)
             status    = "FAIL" if pb_count > threshold else "PASS"
             details   = (
@@ -499,7 +513,7 @@ class OrgAnalyser:
         # AUTO-002 — Active Workflow Rules (Legacy)
         check = self._get_check("AUTO-002")
         if check:
-            wf_count  = automation.get("legacy_workflow_rules", 0)
+            wf_count  = _safe_int(automation.get("legacy_workflow_rules", 0))
             threshold = check.get("threshold", {}).get("max_count", 0)
             status    = "FAIL" if wf_count > threshold else "PASS"
             details   = (
@@ -1095,6 +1109,8 @@ class OrgAnalyser:
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}],
             )
+            self._total_input_tokens  += response.usage.input_tokens
+            self._total_output_tokens += response.usage.output_tokens
             full_text = response.content[0].text.strip()
 
             # Split at the second paragraph boundary

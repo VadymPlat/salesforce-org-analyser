@@ -876,7 +876,8 @@ class SalesforceClient:
         flows = self._get_all_records(
             "SELECT Id, ApiName, Label, ProcessType FROM Flow "
             "WHERE Status = 'Active' "
-            "AND ProcessType IN ('AutoLaunchedFlow', 'RecordAfterSave', 'RecordBeforeSave')",
+            "AND ProcessType IN ('AutoLaunchedFlow', 'RecordAfterSave', 'RecordBeforeSave') "
+            "ORDER BY Label",
             tooling=True,
         )
         result_flows = [
@@ -910,7 +911,8 @@ class SalesforceClient:
         jobs = self._get_all_records(
             "SELECT Id, CronJobDetail.Name, State, NextFireTime, CronExpression "
             "FROM CronTrigger "
-            "WHERE State = 'WAITING'"
+            "WHERE State = 'WAITING' "
+            "ORDER BY NextFireTime ASC NULLS LAST"
         )
         result_jobs = [
             {
@@ -944,7 +946,8 @@ class SalesforceClient:
         fields = self._get_all_records(
             "SELECT EntityDefinition.QualifiedApiName, QualifiedApiName, DataType "
             "FROM FieldDefinition "
-            "WHERE DataType = 'MultiselectPicklist'",
+            "WHERE DataType = 'MultiselectPicklist' "
+            "ORDER BY EntityDefinition.QualifiedApiName, QualifiedApiName",
             tooling=True,
         )
         result_fields = [
@@ -976,7 +979,8 @@ class SalesforceClient:
         print("Collecting Connected Apps ...")
         apps = self._get_all_records(
             "SELECT Id, Name, OptionsAllowAdminApprovedUsersOnly "
-            "FROM ConnectedApplication",
+            "FROM ConnectedApplication "
+            "ORDER BY Name",
             tooling=True,
         )
         result_apps = [
@@ -1009,7 +1013,8 @@ class SalesforceClient:
         sites = self._get_all_records(
             "SELECT Id, SiteName, EndpointUrl, IsActive "
             "FROM RemoteProxy "
-            "WHERE IsActive = true"
+            "WHERE IsActive = true "
+            "ORDER BY SiteName"
         )
         result_sites = [
             {
@@ -1039,7 +1044,8 @@ class SalesforceClient:
         """
         print("Collecting Named Credentials ...")
         creds = self._get_all_records(
-            "SELECT Id, DeveloperName, Endpoint FROM NamedCredential",
+            "SELECT Id, DeveloperName, Endpoint FROM NamedCredential "
+            "ORDER BY DeveloperName",
             tooling=True,
         )
         result = [
@@ -1076,7 +1082,8 @@ class SalesforceClient:
             "WHERE (Field LIKE '%SSN%' OR Field LIKE '%Social_Security%' "
             "OR Field LIKE '%Salary%' OR Field LIKE '%Credit_Card%' "
             "OR Field LIKE '%Bank_Account%' OR Field LIKE '%Tax_ID%') "
-            "AND PermissionsRead = true"
+            "AND PermissionsRead = true "
+            "ORDER BY Field, SobjectType"
         )
         fields_readable_by: dict[str, list[str]] = {}
         for r in records:
@@ -1112,7 +1119,8 @@ class SalesforceClient:
             "SELECT EntityDefinition.QualifiedApiName, QualifiedApiName, "
             "DataType, RelationshipName "
             "FROM FieldDefinition "
-            "WHERE DataType = 'MasterDetail'",
+            "WHERE DataType = 'MasterDetail' "
+            "ORDER BY EntityDefinition.QualifiedApiName, QualifiedApiName",
             tooling=True,
         )
         fields_by_object: dict[str, list[str]] = {}
@@ -1145,10 +1153,12 @@ class SalesforceClient:
             "SELECT EntityDefinition.QualifiedApiName, QualifiedApiName, IsIdLookup "
             "FROM FieldDefinition "
             "WHERE EntityDefinition.QualifiedApiName LIKE '%__c' "
-            "AND IsIdLookup = true",
+            "AND IsIdLookup = true "
+            "ORDER BY EntityDefinition.QualifiedApiName, QualifiedApiName",
             tooling=True,
         )
-        objects_with_ext_id = list({
+        # Use sorted() to guarantee deterministic order — set iteration is not stable
+        objects_with_ext_id = sorted({
             f.get("EntityDefinition", {}).get("QualifiedApiName", "")
             for f in fields
         })
@@ -1177,7 +1187,8 @@ class SalesforceClient:
         rules = self._get_all_records(
             "SELECT Id, EntityDefinition.QualifiedApiName, ErrorMessage, Active "
             "FROM ValidationRule "
-            "WHERE Active = true",
+            "WHERE Active = true "
+            "ORDER BY EntityDefinition.QualifiedApiName, Id",
             tooling=True,
         )
         result = [
@@ -1210,7 +1221,7 @@ class SalesforceClient:
         if "error" in result:
             print("  [WARNING] CustomLabel query failed — defaulting to 0")
             return {"count": 0}
-        count = result.get("totalSize", 0)
+        count = int(result.get("totalSize", 0))
         print(f"  Custom labels: {count}")
         return {"count": count}
 
